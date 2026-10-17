@@ -6,6 +6,7 @@
   <title>TaskCheckerAI — загрузка данных</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css" rel="stylesheet">
   <style>
     body { background-color: #f5f7fa; }
     .brand-icon { color: #0d6efd; }
@@ -51,6 +52,31 @@
       box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .15);
     }
     .stepper .step.done, .stepper .step.active { color: #0d6efd; font-weight: 600; }
+    .md > :last-child { margin-bottom: 0; }
+    .md p { margin-bottom: .5rem; }
+    .md pre { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: .375rem;
+      padding: .75rem; overflow: auto; font-size: .8rem; }
+    .md code { background: #f1f3f5; padding: .1rem .3rem; border-radius: .25rem; font-size: .85em;
+      color: #d63384; }
+    .md pre code { background: none; padding: 0; color: inherit; }
+    .md ul, .md ol { margin-bottom: .5rem; padding-left: 1.5rem; }
+    .md blockquote { border-left: .25rem solid #dee2e6; padding-left: .75rem; color: #6c757d;
+      margin: 0 0 .5rem; }
+    .md table { width: 100%; margin-bottom: .5rem; }
+    .md table th, .md table td { border: 1px solid #dee2e6; padding: .35rem .5rem; }
+    .md img { max-width: 100%; }
+    .tab-body { border: 1px solid #dee2e6; border-top: 0; border-radius: 0 0 .375rem .375rem;
+      padding: .75rem; background: #fff; }
+    .nav-tabs .nav-link { font-size: .85rem; padding: .3rem .8rem; }
+    .code-input { font-family: var(--bs-font-monospace); font-size: .85rem; white-space: pre; }
+    .CodeMirror { height: auto; min-height: 8rem; border: 1px solid #dee2e6; border-radius: .375rem;
+      font-size: .85rem; font-family: var(--bs-font-monospace); }
+    .CodeMirror-scroll { max-height: 26rem; }
+    .cm-s-default .cm-keyword { color: #0000c0; }
+    .code-detected { font-size: .78rem; color: #6c757d; }
+    .chip-remove { border: 0; background: transparent; color: #dc3545; cursor: pointer;
+      padding: 0 .1rem; line-height: 1; display: inline-flex; align-items: center; }
+    .chip-remove:hover { color: #a71d2a; }
   </style>
 </head>
 <body>
@@ -104,13 +130,36 @@
             </div>
 
             <div class="mb-3">
-              <label class="section-title d-block mb-2">Эталонное решение (файлы / архив / .ipynb)</label>
-              <div class="drop-zone" id="refZone" data-input="reference_files">
-                <i class="bi bi-file-earmark-code fs-3 text-secondary"></i>
-                <div class="mt-1">Перетащите файлы сюда или <span class="text-primary">выберите</span></div>
+              <label class="section-title d-block mb-2">Эталонное решение (файлы / архив / .ipynb / код)</label>
+              <div data-tabs="reference">
+                <ul class="nav nav-tabs mb-0">
+                  <li class="nav-item"><button type="button" class="nav-link active" data-tab="files">
+                    <i class="bi bi-files"></i> Файлы</button></li>
+                  <li class="nav-item"><button type="button" class="nav-link" data-tab="code">
+                    <i class="bi bi-code-slash"></i> Код</button></li>
+                </ul>
+                <div class="tab-body" data-pane="files">
+                  <div class="drop-zone" id="refZone" data-input="reference_files">
+                    <i class="bi bi-file-earmark-code fs-3 text-secondary"></i>
+                    <div class="mt-1">Перетащите файлы сюда или <span class="text-primary">выберите</span></div>
+                  </div>
+                  <input type="file" id="reference_files" name="reference_files" class="d-none" multiple>
+                  <div class="mt-2" id="refList"></div>
+                </div>
+                <div class="tab-body d-none" data-pane="code">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="small text-muted mb-0" for="referenceCodeLang">Язык:</label>
+                    <select class="form-select form-select-sm w-auto" id="referenceCodeLang">
+                      <option value="auto" selected>Авто</option>
+                      <option value="python">Python</option>
+                      <option value="cpp">C++</option>
+                    </select>
+                    <span class="code-detected ms-auto" id="referenceCodeDetected"></span>
+                  </div>
+                  <textarea class="form-control code-input" id="referenceCode" rows="6" spellcheck="false"
+                    placeholder="# Эталонное решение, например на Python"></textarea>
+                </div>
               </div>
-              <input type="file" id="reference_files" name="reference_files" class="d-none" multiple>
-              <div class="mt-2" id="refList"></div>
             </div>
 
             <hr>
@@ -118,12 +167,35 @@
             <!-- Файлы решения (одиночный режим) -->
             <div class="mb-3 mode-single">
               <label class="section-title d-block mb-2">Решение ученика <span class="text-danger">*</span></label>
-              <div class="drop-zone" id="filesZone" data-input="files">
-                <i class="bi bi-file-earmark-arrow-up fs-3 text-secondary"></i>
-                <div class="mt-1">Файлы, архив или .ipynb</div>
+              <div data-tabs="student">
+                <ul class="nav nav-tabs mb-0">
+                  <li class="nav-item"><button type="button" class="nav-link active" data-tab="files">
+                    <i class="bi bi-files"></i> Файлы</button></li>
+                  <li class="nav-item"><button type="button" class="nav-link" data-tab="code">
+                    <i class="bi bi-code-slash"></i> Код</button></li>
+                </ul>
+                <div class="tab-body" data-pane="files">
+                  <div class="drop-zone" id="filesZone" data-input="files">
+                    <i class="bi bi-file-earmark-arrow-up fs-3 text-secondary"></i>
+                    <div class="mt-1">Файлы, архив или .ipynb</div>
+                  </div>
+                  <input type="file" id="files" name="files" class="d-none" multiple>
+                  <div class="mt-2" id="filesList"></div>
+                </div>
+                <div class="tab-body d-none" data-pane="code">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="small text-muted mb-0" for="studentCodeLang">Язык:</label>
+                    <select class="form-select form-select-sm w-auto" id="studentCodeLang">
+                      <option value="auto" selected>Авто</option>
+                      <option value="python">Python</option>
+                      <option value="cpp">C++</option>
+                    </select>
+                    <span class="code-detected ms-auto" id="studentCodeDetected"></span>
+                  </div>
+                  <textarea class="form-control code-input" id="studentCode" rows="10" spellcheck="false"
+                    placeholder="print('Hello, world!')"></textarea>
+                </div>
               </div>
-              <input type="file" id="files" name="files" class="d-none" multiple>
-              <div class="mt-2" id="filesList"></div>
             </div>
 
             <!-- Работы (пакетный режим) -->
@@ -188,6 +260,11 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.js"></script>
 <script>
 (function () {
   "use strict";
@@ -212,6 +289,35 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+
+  /* ---------- Markdown → HTML ---------- */
+  var markedReady = typeof window.marked !== "undefined" && window.marked &&
+    typeof window.marked.parse === "function";
+  var purifyReady = typeof window.DOMPurify !== "undefined" && window.DOMPurify &&
+    typeof window.DOMPurify.sanitize === "function";
+  if (markedReady) {
+    window.marked.setOptions({ breaks: true, gfm: true });
+  }
+
+  // Рендерит Markdown в безопасный HTML; при отсутствии библиотек — экранированный текст.
+  function md(value) {
+    var text = String(value == null ? "" : value);
+    if (!text.trim()) return "";
+    if (markedReady) {
+      var raw = window.marked.parse(text);
+      return purifyReady ? window.DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } }) : esc(text);
+    }
+    return '<p class="mb-0">' + esc(text).replace(/\n/g, "<br>") + "</p>";
+  }
+
+  // Markdown без разметки (для однострочных превью в таблице).
+  function mdToText(value) {
+    var text = String(value == null ? "" : value);
+    if (!markedReady || !purifyReady) return text;
+    var tmp = document.createElement("div");
+    tmp.innerHTML = window.DOMPurify.sanitize(window.marked.parse(text));
+    return (tmp.textContent || "").replace(/\s+/g, " ").trim();
+  }
   function humanSize(bytes) {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -229,23 +335,54 @@
   function clearAlert() { alertBox.innerHTML = ""; }
 
   /* ---------- отображение выбранных файлов ---------- */
-  function renderFileList(inputId, listId) {
+  const FILE_LISTS = { reference_files: "refList", files: "filesList", submissions: "subsList" };
+  const fileStore = { reference_files: [], files: [], submissions: [] };
+
+  function syncInput(inputId) {
     const input = document.getElementById(inputId);
-    const list = document.getElementById(listId);
-    list.innerHTML = "";
-    Array.from(input.files).forEach(function (file) {
-      const chip = document.createElement("span");
-      chip.className = "file-chip";
-      chip.innerHTML = '<i class="bi bi-file-earmark"></i><span class="name">' +
-        esc(file.name) + '</span><span class="text-muted">' + humanSize(file.size) + '</span>';
-      list.appendChild(chip);
+    const dt = new DataTransfer();
+    fileStore[inputId].forEach(function (f) { dt.items.add(f); });
+    input.files = dt.files;
+  }
+  function addFilesToStore(inputId, files) {
+    Array.from(files).forEach(function (f) {
+      const dup = fileStore[inputId].some(function (x) {
+        return x.name === f.name && x.size === f.size && x.lastModified === f.lastModified;
+      });
+      if (!dup) fileStore[inputId].push(f);
+    });
+    syncInput(inputId);
+    renderFileList(inputId);
+  }
+  function removeFile(inputId, index) {
+    fileStore[inputId].splice(index, 1);
+    syncInput(inputId);
+    renderFileList(inputId);
+  }
+  function renderFileList(inputId) {
+    const list = document.getElementById(FILE_LISTS[inputId]);
+    if (!list) return;
+    if (!fileStore[inputId].length) { list.innerHTML = ""; return; }
+    list.innerHTML = fileStore[inputId].map(function (file, i) {
+      return '<span class="file-chip"><i class="bi bi-file-earmark"></i>' +
+        '<span class="name">' + esc(file.name) + '</span>' +
+        '<span class="text-muted">' + humanSize(file.size) + '</span>' +
+        '<button type="button" class="chip-remove" data-index="' + i + '" title="Убрать файл">' +
+        '<i class="bi bi-x-lg"></i></button></span>';
+    }).join("");
+    list.querySelectorAll(".chip-remove").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeFile(inputId, Number(btn.dataset.index));
+      });
     });
   }
-  function bindZone(zoneId, inputId, listId) {
+  function bindZone(zoneId, inputId) {
     const zone = document.getElementById(zoneId);
     const input = document.getElementById(inputId);
     zone.addEventListener("click", function () { input.click(); });
-    input.addEventListener("change", function () { renderFileList(inputId, listId); });
+    input.addEventListener("change", function () { addFilesToStore(inputId, input.files); });
     ["dragenter", "dragover"].forEach(function (ev) {
       zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add("dragover"); });
     });
@@ -253,15 +390,126 @@
       zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove("dragover"); });
     });
     zone.addEventListener("drop", function (e) {
-      if (e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        renderFileList(inputId, listId);
-      }
+      if (e.dataTransfer.files.length) addFilesToStore(inputId, e.dataTransfer.files);
     });
   }
-  bindZone("refZone", "reference_files", "refList");
-  bindZone("filesZone", "files", "filesList");
-  bindZone("subsZone", "submissions", "subsList");
+  bindZone("refZone", "reference_files");
+  bindZone("filesZone", "files");
+  bindZone("subsZone", "submissions");
+
+  /* ---------- вкладки режима входных данных ---------- */
+  function selectTab(group, tab) {
+    group.querySelectorAll("[data-tab]").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.tab === tab);
+    });
+    group.querySelectorAll("[data-pane]").forEach(function (p) {
+      p.classList.toggle("d-none", p.dataset.pane !== tab);
+    });
+    if (typeof refreshEditors === "function") window.setTimeout(refreshEditors, 0);
+  }
+  function activeTab(name) {
+    const group = document.querySelector('[data-tabs="' + name + '"]');
+    const btn = group && group.querySelector("[data-tab].active");
+    return btn ? btn.dataset.tab : "files";
+  }
+  document.querySelectorAll("[data-tabs]").forEach(function (group) {
+    group.querySelectorAll("[data-tab]").forEach(function (btn) {
+      btn.addEventListener("click", function () { selectTab(group, btn.dataset.tab); });
+    });
+  });
+
+  /* ---------- подсветка синтаксиса кода (Python / C++) ---------- */
+  const CODE_BLOCKS = [
+    { code: "studentCode", lang: "studentCodeLang", detected: "studentCodeDetected" },
+    { code: "referenceCode", lang: "referenceCodeLang", detected: "referenceCodeDetected" }
+  ];
+  const editors = {};
+
+  function detectLanguage(code) {
+    const src = String(code || "");
+    if (!src.trim()) return "python";
+    let python = 0, cpp = 0;
+    const rules = [
+      [/^\s*#\s*include\b/m, 4, "cpp"],
+      [/#include\s*[<"]/, 4, "cpp"],
+      [/\bstd::/, 3, "cpp"],
+      [/\b(using\s+namespace\s+std|cout|cin|cerr|endl)\b/, 3, "cpp"],
+      [/\bint\s+main\s*\(/, 3, "cpp"],
+      [/\b(vector|string|map|set|pair|queue|stack|template)\s*</, 2, "cpp"],
+      [/\b(nullptr|new\s+\w+|delete\s+\w+)\b/, 2, "cpp"],
+      [/\b(public|private|protected)\s*:/, 2, "cpp"],
+      [/#\s*define\b/, 2, "cpp"],
+      [/->\s*\w+\s*\(/, 2, "cpp"],
+      [/;\s*$/m, 1, "cpp"],
+      [/^\s*def\s+\w+\s*\(/m, 4, "python"],
+      [/^\s*(import|from)\s+\w+/m, 3, "python"],
+      [/\bprint\s*\(/, 2, "python"],
+      [/\bself\b/, 2, "python"],
+      [/^\s*elif\b/m, 3, "python"],
+      [/__name__\s*==/, 3, "python"],
+      [/^\s*(class|def)\b.*:\s*$/m, 2, "python"],
+      [/\b(None|True|False)\b/, 1, "python"],
+      [/:\s*$/m, 1, "python"]
+    ];
+    rules.forEach(function (rule) {
+      if (rule[0].test(src)) { if (rule[2] === "cpp") cpp += rule[1]; else python += rule[1]; }
+    });
+    if (cpp === python) return "python";
+    return cpp > python ? "cpp" : "python";
+  }
+
+  function codeValue(codeInputId) {
+    const ed = editors[codeInputId];
+    return ed ? ed.getValue() : (document.getElementById(codeInputId) || {}).value || "";
+  }
+
+  function resolveLanguage(codeInputId) {
+    const sel = document.getElementById(codeInputId + "Lang");
+    const chosen = sel ? sel.value : "auto";
+    if (chosen === "python" || chosen === "cpp") return chosen;
+    return detectLanguage(codeValue(codeInputId));
+  }
+
+  function applyCodeLanguage(codeId) {
+    const cfg = CODE_BLOCKS.filter(function (b) { return b.code === codeId; })[0];
+    if (!cfg) return;
+    const chosen = (document.getElementById(cfg.lang) || {}).value || "auto";
+    const lang = resolveLanguage(codeId);
+    const mode = lang === "cpp" ? "text/x-c++src" : "python";
+    const ed = editors[codeId];
+    if (ed && ed.getOption("mode") !== mode) ed.setOption("mode", mode);
+    const lbl = document.getElementById(cfg.detected);
+    if (lbl) {
+      lbl.textContent = chosen === "auto"
+        ? ("определён: " + (lang === "cpp" ? "C++" : "Python"))
+        : "";
+    }
+  }
+
+  function refreshEditors() {
+    Object.keys(editors).forEach(function (id) { editors[id].refresh(); });
+  }
+
+  function initCodeEditors() {
+    if (typeof window.CodeMirror === "undefined") return;
+    CODE_BLOCKS.forEach(function (cfg) {
+      const textarea = document.getElementById(cfg.code);
+      if (!textarea) return;
+      const editor = window.CodeMirror.fromTextArea(textarea, {
+        mode: "python",
+        lineNumbers: true,
+        indentUnit: 4,
+        tabSize: 4,
+        viewportMargin: Infinity
+      });
+      editor.on("change", function () { applyCodeLanguage(cfg.code); });
+      editors[cfg.code] = editor;
+      const sel = document.getElementById(cfg.lang);
+      if (sel) sel.addEventListener("change", function () { applyCodeLanguage(cfg.code); });
+      applyCodeLanguage(cfg.code);
+    });
+  }
+  initCodeEditors();
 
   /* ---------- переключение режима ---------- */
   document.querySelectorAll('input[name="mode"]').forEach(function (radio) {
@@ -329,7 +577,7 @@
       '</div></div>';
 
     html += '<div class="card shadow-sm mb-3"><div class="card-body">' +
-      '<h6 class="section-title">Резюме</h6><p class="mb-0">' + esc(result.summary) + '</p></div></div>';
+      '<h6 class="section-title">Резюме</h6><div class="md">' + md(result.summary) + '</div></div></div>';
 
     html += '<div class="card shadow-sm mb-3"><div class="card-header bg-white section-title">Снятые баллы (' +
       (result.deductions || []).length + ')</div><ul class="list-group list-group-flush">';
@@ -338,7 +586,7 @@
     } else {
       result.deductions.forEach(function (d) {
         html += '<li class="list-group-item d-flex justify-content-between gap-3">' +
-          '<span>' + esc(d.reason) + '</span>' +
+          '<div class="md flex-grow-1">' + md(d.reason) + '</div>' +
           '<span class="badge text-bg-danger align-self-start">−' + esc(d.points) + '</span></li>';
       });
     }
@@ -386,15 +634,18 @@
         '<td class="fw-semibold">' + esc(s.student) + '</td>' +
         '<td class="text-end"><span class="fw-bold ' + color + '">' + esc(r.score) + '</span>' +
         '<span class="text-muted"> / ' + esc(r.max_score) + '</span></td>' +
-        '<td class="small text-truncate" style="max-width:22rem">' + esc(r.summary) + '</td>' +
+        '<td class="small text-truncate" style="max-width:22rem">' + esc(mdToText(r.summary)) + '</td>' +
         '<td class="text-end"><i class="bi bi-chevron-down text-muted"></i></td></tr>';
 
       html += '<tr class="collapse" id="st-' + i + '"><td colspan="4" class="bg-light">';
+      if (r.summary) {
+        html += '<div class="section-title">Резюме</div><div class="md small mb-2">' + md(r.summary) + '</div>';
+      }
       if (r.deductions && r.deductions.length) {
         html += '<div class="section-title">Снятые баллы</div><ul class="list-group list-group-flush mb-2">' +
           r.deductions.map(function (d) {
             return '<li class="list-group-item bg-transparent d-flex justify-content-between gap-3 px-0">' +
-              '<span class="small">' + esc(d.reason) + '</span>' +
+              '<div class="small md flex-grow-1">' + md(d.reason) + '</div>' +
               '<span class="badge text-bg-danger align-self-start">−' + esc(d.points) + '</span></li>';
           }).join("") + '</ul>';
       } else {
@@ -411,6 +662,26 @@
   }
 
   /* ---------- отправка ---------- */
+  function codeFile(codeInputId, code) {
+    const lang = resolveLanguage(codeInputId);
+    const name = lang === "cpp" ? "solution.cpp" : "solution.py";
+    return new File([code], name, { type: "text/plain" });
+  }
+  function addStored(fd, inputId, fieldName) {
+    fileStore[inputId].forEach(function (f) { fd.append(fieldName, f, f.name); });
+  }
+  function appendSource(fd, fieldName, tabName, codeInputId, inputId) {
+    if (activeTab(tabName) === "code") {
+      const code = codeValue(codeInputId);
+      if (code.trim()) {
+        const file = codeFile(codeInputId, code);
+        fd.append(fieldName, file, file.name);
+      }
+    } else {
+      addStored(fd, inputId, fieldName);
+    }
+  }
+
   function buildFormData() {
     const mode = currentMode();
     const fd = new FormData();
@@ -424,26 +695,36 @@
     if (useStdinEl.checked && document.getElementById("stdin_data").value) {
       fd.append("stdin_data", document.getElementById("stdin_data").value);
     }
-    addFiles(fd, "reference_files", "reference_files");
-    if (mode === "batch") addFiles(fd, "submissions", "submissions");
-    else addFiles(fd, "files", "files");
+    appendSource(fd, "reference_files", "reference", "referenceCode", "reference_files");
+    if (mode === "batch") addStored(fd, "submissions", "submissions");
+    else appendSource(fd, "files", "student", "studentCode", "files");
     return { fd: fd, mode: mode, task: task };
   }
-  function addFiles(fd, inputId, fieldName) {
-    Array.from(document.getElementById(inputId).files).forEach(function (f) {
-      fd.append(fieldName, f, f.name);
-    });
+
+  function hasReferenceSource() {
+    if (activeTab("reference") === "code") {
+      return !!codeValue("referenceCode").trim();
+    }
+    return fileStore.reference_files.length > 0;
   }
 
   function validate(data) {
-    const refFiles = document.getElementById("reference_files").files.length;
-    if (!data.task && !refFiles) {
-      showAlert("danger", "Укажите текст задачи или загрузите эталонное решение.");
+    if (!data.task && !hasReferenceSource()) {
+      showAlert("danger", "Укажите текст задачи или эталонное решение (файлы/код).");
       return false;
     }
-    const main = data.mode === "batch" ? "submissions" : "files";
-    if (!document.getElementById(main).files.length) {
-      showAlert("danger", data.mode === "batch" ? "Добавьте хотя бы одну работу ученика." : "Добавьте файлы решения.");
+    if (data.mode === "batch") {
+      if (!fileStore.submissions.length) {
+        showAlert("danger", "Добавьте хотя бы одну работу ученика.");
+        return false;
+      }
+      return true;
+    }
+    const hasSolution = activeTab("student") === "code"
+      ? !!codeValue("studentCode").trim()
+      : fileStore.files.length > 0;
+    if (!hasSolution) {
+      showAlert("danger", "Загрузите файлы решения или введите код решения.");
       return false;
     }
     return true;
@@ -654,7 +935,16 @@
 
   resetBtn.addEventListener("click", function () {
     form.reset();
+    Object.keys(fileStore).forEach(function (id) { fileStore[id] = []; syncInput(id); });
     ["refList", "filesList", "subsList"].forEach(function (id) { document.getElementById(id).innerHTML = ""; });
+    CODE_BLOCKS.forEach(function (cfg) {
+      if (editors[cfg.code]) editors[cfg.code].setValue("");
+      const sel = document.getElementById(cfg.lang);
+      if (sel) sel.value = "auto";
+      const lbl = document.getElementById(cfg.detected);
+      if (lbl) lbl.textContent = "";
+    });
+    document.querySelectorAll("[data-tabs]").forEach(function (g) { selectTab(g, "files"); });
     stdinWrap.classList.add("d-none");
     maxScoreEl.value = 100;
     document.querySelectorAll(".mode-single").forEach(function (el) { el.classList.remove("d-none"); });
