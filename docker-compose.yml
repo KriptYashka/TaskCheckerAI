@@ -1,0 +1,21 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: taskcheckerai:latest
+    container_name: taskcheckerai
+    ports:
+      - "8000:8000"
+    environment:
+      # Ollama на хосте (host.docker.internal работает в Docker Desktop и через extra_hosts на Linux)
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LLM_MODEL: qwen2.5-coder:7b
+      LLM_NUM_CTX: "16384"
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      # Внутри контейнера Docker-песочница недоступна — используем локальный subprocess
+      SANDBOX_BACKEND: local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
