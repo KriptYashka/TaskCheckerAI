@@ -448,6 +448,42 @@ python main.py
 Если Docker недоступен, песочница автоматически переключится на локальный subprocess-режим
 (это видно в `GET /health`). Для принудительного режима задайте `SANDBOX_BACKEND=local`.
 
+### Docker
+
+В репозитории есть `Dockerfile`, `.dockerignore` и `docker-compose.yml`.
+
+Собрать образ:
+
+```bash
+docker build -t taskcheckerai:latest .
+```
+
+Запустить контейнер (Ollama должна быть доступна с хоста; модель уже загружена):
+
+```bash
+# Docker Desktop (Windows/macOS)
+docker run --rm -p 8000:8000 taskcheckerai:latest
+
+# Linux — дать контейнеру доступ к хосту
+docker run --rm -p 8000:8000 ^
+  --add-host=host.docker.internal:host-gateway ^
+  taskcheckerai:latest
+```
+
+Либо через Compose:
+
+```bash
+docker compose up --build
+```
+
+Веб-интерфейс: `http://127.0.0.1:8000/`. Настройки передаются переменными окружения,
+например `docker run -e OLLAMA_BASE_URL=http://host.docker.internal:11434 -p 8000:8000 taskcheckerai:latest`.
+
+> **Песочница в контейнере.** Внутри образа нет доступа к Docker-демону, поэтому
+> `SANDBOX_BACKEND` по умолчанию выставлен в `local`: решение запускается локальным
+> `python` внутри контейнера (без изоляции). Docker-изоляция доступна только при запуске
+> сервиса без контейнера (см. выше).
+
 ---
 
 ## Веб-интерфейс
