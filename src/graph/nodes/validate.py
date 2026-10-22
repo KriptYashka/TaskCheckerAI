@@ -31,7 +31,7 @@ def collect_grade_errors(grade: GradeResult | None, max_score: int) -> list[str]
 
 def compute_score(grade: GradeResult, max_score: int) -> float:
     total = sum(d.points for d in grade.deductions if d.points > 0 and d.reason.strip())
-    total = min(total, float(max_score))
+    total = min(total, max_score)
     return round(max_score - total, 4)
 
 

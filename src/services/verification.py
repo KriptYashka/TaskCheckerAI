@@ -11,7 +11,7 @@ from core.ingest.loaders import IngestError
 from core.models import GradeResult, VerificationResult
 from core.sandbox.runner import create_runner
 from graph.builder import build_graph
-from llm.factory import create_chat_model
+from llm.factory import create_chat_model, create_structured_model
 
 
 class VerificationService:
@@ -19,9 +19,7 @@ class VerificationService:
         self.settings = settings or get_settings()
         runner = create_runner(self.settings)
         analyze_model = create_chat_model(self.settings)
-        grade_model = create_chat_model(self.settings).with_structured_output(
-            GradeResult, method="json_schema"
-        )
+        grade_model = create_structured_model(self.settings, GradeResult)
         self.runner_name = runner.name
         self.graph = build_graph(
             self.settings, analyze_model, grade_model, runner, checkpointer=MemorySaver()
