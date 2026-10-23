@@ -57,17 +57,53 @@ class ExecutionStatus(str, Enum):
 
 
 class ExecutionResult(BaseModel):
-    status: ExecutionStatus = ExecutionStatus.SKIPPED
-    exit_code: Optional[int] = None
-    stdout: str = ""
-    stderr: str = ""
-    matches_reference: Optional[bool] = None
-    detail: str = ""
+    status: ExecutionStatus = Field(
+        default=ExecutionStatus.SKIPPED,
+        description=(
+            "Статус запуска: `ok` — успешно, `failed` — ненулевой код возврата, "
+            "`timeout` — превышен таймаут, `skipped` — запуск не выполнялся, "
+            "`error` — ошибка запуска."
+        ),
+        examples=[ExecutionStatus.OK],
+    )
+    exit_code: Optional[int] = Field(
+        None,
+        description="Код возврата процесса. `null`, если запуск не выполнялся.",
+        examples=[0],
+    )
+    stdout: str = Field(
+        "",
+        description="Стандартный вывод программы (может быть обрезан по лимиту).",
+        examples=["7\n"],
+    )
+    stderr: str = Field(
+        "",
+        description="Стандартный поток ошибок программы.",
+        examples=[""],
+    )
+    matches_reference: Optional[bool] = Field(
+        None,
+        description="Совпал ли вывод с эталоном. `null`, если сравнение не выполнялось.",
+        examples=[True],
+    )
+    detail: str = Field(
+        "",
+        description="Пояснение к запуску: бэкенд песочницы, причина пропуска или ошибки.",
+        examples=["Локальный запуск без изоляции (Docker недоступен)"],
+    )
 
 
 class Deduction(BaseModel):
-    points: float = Field(ge=0, description="Сколько баллов снято")
-    reason: str = Field(min_length=1, description="За что сняты баллы")
+    points: float = Field(
+        ge=0,
+        description="Сколько баллов снято",
+        examples=[2.0],
+    )
+    reason: str = Field(
+        min_length=1,
+        description="За что сняты баллы",
+        examples=["не обработан пустой ввод"],
+    )
 
 
 class GradeResult(BaseModel):
@@ -79,10 +115,30 @@ class GradeResult(BaseModel):
 
 
 class VerificationResult(BaseModel):
-    score: float
-    max_score: int
-    deductions: list[Deduction]
-    summary: str
-    execution: ExecutionResult
-    retries_used: int = 0
-    warnings: list[str] = Field(default_factory=list)
+    score: float = Field(
+        description="Итоговый балл: `max_score - Σ deductions.points`.",
+        examples=[8.0],
+    )
+    max_score: int = Field(
+        description="Максимально возможный балл для этой работы.",
+        examples=[10],
+    )
+    deductions: list[Deduction] = Field(
+        description="Список снятых баллов с причинами.",
+    )
+    summary: str = Field(
+        description="Краткое резюме проверки.",
+        examples=["Решение в целом верное, есть замечания по надёжности."],
+    )
+    execution: ExecutionResult = Field(
+        description="Результат запуска решения в песочнице.",
+    )
+    retries_used: int = Field(
+        0,
+        description="Сколько раз оценка запрашивалась повторно из-за несогласованности.",
+        examples=[0],
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Предупреждения валидации и ограничения контекста.",
+    )
