@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskCheckerAI — загрузка данных</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    body { background-color: #f5f7fa; }
+    .brand-icon { color: #0d6efd; }
+    .drop-zone {
+      border: 2px dashed #ced4da;
+      border-radius: .5rem;
+      padding: 1.5rem;
+      text-align: center;
+      background: #fff;
+      transition: border-color .15s, background-color .15s;
+      cursor: pointer;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #0d6efd; background: #eef5ff; }
+    .file-chip {
+      display: inline-flex; align-items: center; gap: .35rem;
+      background: #e9ecef; border-radius: 1rem; padding: .2rem .7rem;
+      font-size: .85rem; margin: .15rem;
+      max-width: 100%;
+    }
+    .file-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22rem; }
+    .score-value { font-size: 2.5rem; font-weight: 700; line-height: 1; }
+    .sticky-card { position: sticky; top: 1rem; }
+    pre.report { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: .375rem;
+      padding: .75rem; max-height: 22rem; overflow: auto; font-size: .8rem; white-space: pre-wrap; word-break: break-word;}
+    .table-student tbody tr { cursor: pointer; }
+    .section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; font-weight: 600; }
+    .stepper { list-style: none; display: flex; margin: 0; padding: 0; }
+    .stepper .step { flex: 1 1 0; text-align: center; position: relative; font-size: .78rem; color: #adb5bd; }
+    .stepper .step .dot {
+      position: relative; z-index: 1; width: 1.9rem; height: 1.9rem; border-radius: 50%;
+      background: #e9ecef; border: 2px solid #e9ecef; color: #6c757d;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto .4rem; font-size: .8rem; transition: all .2s;
+    }
+    .stepper .step:not(:last-child)::after {
+      content: ""; position: absolute; top: .95rem; left: 50%; width: 100%; height: 2px;
+      background: #e9ecef; z-index: 0;
+    }
+    .stepper .step.done .dot { background: #0d6efd; border-color: #0d6efd; color: #fff; }
+    .stepper .step.done:not(:last-child)::after { background: #0d6efd; }
+    .stepper .step.active .dot {
+      background: #fff; border-color: #0d6efd; color: #0d6efd;
+      box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .15);
+    }
+    .stepper .step.done, .stepper .step.active { color: #0d6efd; font-weight: 600; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+  <div class="container">
+    <span class="navbar-brand fw-semibold">
+      <i class="bi bi-cpu brand-icon text-white"></i> TaskCheckerAI
+    </span>
+    <div class="ms-auto d-flex flex-wrap gap-2" id="healthBadges">
+      <span class="badge text-bg-secondary"><i class="bi bi-cpu"></i> модель: …</span>
+      <span class="badge text-bg-secondary"><i class="bi bi-box"></i> песочница: …</span>
+      <span class="badge text-bg-secondary"><i class="bi bi-wifi"></i> Ollama: …</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container my-4">
+  <div class="row g-4">
+    <!-- ===================== ФОРМА ===================== -->
+    <div class="col-lg-5">
+      <div class="card shadow-sm sticky-card">
+        <div class="card-header bg-white">
+          <h5 class="mb-0"><i class="bi bi-upload"></i> Входные данные</h5>
+        </div>
+        <div class="card-body">
+          <form id="verifyForm" novalidate>
+            <!-- Режим -->
+            <div class="mb-4">
+              <label class="section-title d-block mb-2">Режим проверки</label>
+              <div class="btn-group w-100" role="group">
+                <input type="radio" class="btn-check" name="mode" id="modeSingle" value="single" checked>
+                <label class="btn btn-outline-primary" for="modeSingle"><i class="bi bi-person"></i> Одна работа</label>
+                <input type="radio" class="btn-check" name="mode" id="modeBatch" value="batch">
+                <label class="btn btn-outline-primary" for="modeBatch"><i class="bi bi-people"></i> Пакет</label>
+              </div>
+            </div>
+
+            <!-- Задача / эталон -->
+            <div class="mb-3">
+              <label class="section-title d-block mb-2">Источник истины <span class="text-danger">*</span></label>
+              <label for="task" class="form-label small mb-1">Текст задачи</label>
+              <textarea class="form-control" id="task" rows="3"
+                placeholder="Условие задачи. Можно оставить пустым, если загружаете эталонное решение."></textarea>
+              <div class="form-text">Нужен текст задачи <b>или</b> эталонное решение ниже.</div>
+            </div>
+
+            <div class="mb-3">
+              <label for="reference" class="form-label small mb-1">Эталонный ответ (опционально)</label>
+              <textarea class="form-control" id="reference" rows="2"
+                placeholder="Например, ожидаемый вывод программы."></textarea>
+            </div>
+
+            <div class="mb-3">
+              <label class="section-title d-block mb-2">Эталонное решение (файлы / архив / .ipynb)</label>
+              <div class="drop-zone" id="refZone" data-input="reference_files">
+                <i class="bi bi-file-earmark-code fs-3 text-secondary"></i>
+                <div class="mt-1">Перетащите файлы сюда или <span class="text-primary">выберите</span></div>
+              </div>
+              <input type="file" id="reference_files" name="reference_files" class="d-none" multiple>
+              <div class="mt-2" id="refList"></div>
+            </div>
+
+            <hr>
+
+            <!-- Файлы решения (одиночный режим) -->
+            <div class="mb-3 mode-single">
+              <label class="section-title d-block mb-2">Решение ученика <span class="text-danger">*</span></label>
+              <div class="drop-zone" id="filesZone" data-input="files">
+                <i class="bi bi-file-earmark-arrow-up fs-3 text-secondary"></i>
+                <div class="mt-1">Файлы, архив или .ipynb</div>
+              </div>
+              <input type="file" id="files" name="files" class="d-none" multiple>
+              <div class="mt-2" id="filesList"></div>
+            </div>
+
+            <!-- Работы (пакетный режим) -->
+            <div class="mb-3 mode-batch d-none">
+              <label class="section-title d-block mb-2">Работы учеников <span class="text-danger">*</span></label>
+              <div class="drop-zone" id="subsZone" data-input="submissions">
+                <i class="bi bi-people fs-3 text-secondary"></i>
+                <div class="mt-1">Каждый файл — работа (ученик.ipynb / ученик.zip / ученик__файл.py)</div>
+              </div>
+              <input type="file" id="submissions" name="submissions" class="d-none" multiple>
+              <div class="mt-2" id="subsList"></div>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-6">
+                <label for="max_score" class="form-label small mb-1">Макс. балл</label>
+                <input type="number" min="1" step="1" class="form-control" id="max_score" value="100">
+              </div>
+              <div class="col-6 d-flex align-items-end">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="useStdin">
+                  <label class="form-check-label small" for="useStdin">Входные данные (stdin)</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="mb-3 mt-2 d-none" id="stdinWrap">
+              <textarea class="form-control" id="stdin_data" rows="2" placeholder="Данные, подаваемые на stdin программы"></textarea>
+            </div>
+
+            <div class="d-grid gap-2 mt-4">
+              <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                <span class="spinner-border spinner-border-sm d-none me-2" id="spinner"></span>
+                <i class="bi bi-search" id="submitIcon"></i> <span id="submitText">Проверить</span>
+              </button>
+              <button type="button" class="btn btn-outline-secondary" id="resetBtn">
+                <i class="bi bi-arrow-counterclockwise"></i> Сбросить
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== РЕЗУЛЬТАТЫ ===================== -->
+    <div class="col-lg-7">
+      <div id="alertBox"></div>
+      <div id="results">
+        <div class="card shadow-sm">
+          <div class="card-body text-center text-muted py-5">
+            <i class="bi bi-clipboard-data fs-1"></i>
+            <p class="mb-0 mt-2">Здесь появятся результаты проверки.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="text-center text-muted small my-5">
+    TaskCheckerAI · LLM через Ollama + LangGraph
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const form = document.getElementById("verifyForm");
+  const submitBtn = document.getElementById("submitBtn");
+  const spinner = document.getElementById("spinner");
+  const submitIcon = document.getElementById("submitIcon");
+  const submitText = document.getElementById("submitText");
+  const resetBtn = document.getElementById("resetBtn");
+  const alertBox = document.getElementById("alertBox");
+  const results = document.getElementById("results");
+
+  const fileInputs = ["reference_files", "files", "submissions"];
+  const maxScoreEl = document.getElementById("max_score");
+  const useStdinEl = document.getElementById("useStdin");
+  const stdinWrap = document.getElementById("stdinWrap");
+
+  /* ---------- вспомогательное ---------- */
+  function esc(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function humanSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  }
+  function currentMode() {
+    return document.querySelector('input[name="mode"]:checked').value;
+  }
+  function showAlert(type, message) {
+    alertBox.innerHTML =
+      '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
+      '<i class="bi bi-exclamation-triangle"></i> ' + esc(message) +
+      '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+  }
+  function clearAlert() { alertBox.innerHTML = ""; }
+
+  /* ---------- отображение выбранных файлов ---------- */
+  function renderFileList(inputId, listId) {
+    const input = document.getElementById(inputId);
+    const list = document.getElementById(listId);
+    list.innerHTML = "";
+    Array.from(input.files).forEach(function (file) {
+      const chip = document.createElement("span");
+      chip.className = "file-chip";
+      chip.innerHTML = '<i class="bi bi-file-earmark"></i><span class="name">' +
+        esc(file.name) + '</span><span class="text-muted">' + humanSize(file.size) + '</span>';
+      list.appendChild(chip);
+    });
+  }
+  function bindZone(zoneId, inputId, listId) {
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    zone.addEventListener("click", function () { input.click(); });
+    input.addEventListener("change", function () { renderFileList(inputId, listId); });
+    ["dragenter", "dragover"].forEach(function (ev) {
+      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add("dragover"); });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove("dragover"); });
+    });
+    zone.addEventListener("drop", function (e) {
+      if (e.dataTransfer.files.length) {
+        input.files = e.dataTransfer.files;
+        renderFileList(inputId, listId);
+      }
+    });
+  }
+  bindZone("refZone", "reference_files", "refList");
+  bindZone("filesZone", "files", "filesList");
+  bindZone("subsZone", "submissions", "subsList");
+
+  /* ---------- переключение режима ---------- */
+  document.querySelectorAll('input[name="mode"]').forEach(function (radio) {
+    radio.addEventListener("change", function () {
+      const batch = currentMode() === "batch";
+      document.querySelectorAll(".mode-single").forEach(function (el) { el.classList.toggle("d-none", batch); });
+      document.querySelectorAll(".mode-batch").forEach(function (el) { el.classList.toggle("d-none", !batch); });
+      submitText.textContent = batch ? "Проверить пакет" : "Проверить";
+    });
+  });
+
+  /* ---------- stdin ---------- */
+  useStdinEl.addEventListener("change", function () {
+    stdinWrap.classList.toggle("d-none", !useStdinEl.checked);
+  });
+
+  /* ---------- здоровье сервиса ---------- */
+  function renderHealth(h) {
+    const ollamaOk = h.ollama_available;
+    document.getElementById("healthBadges").innerHTML =
+      '<span class="badge text-bg-light"><i class="bi bi-cpu"></i> модель: ' + esc(h.model) + '</span>' +
+      '<span class="badge text-bg-light"><i class="bi bi-box"></i> песочница: ' + esc(h.sandbox_backend) + '</span>' +
+      '<span class="badge ' + (ollamaOk ? "text-bg-success" : "text-bg-danger") + '">' +
+      '<i class="bi bi-wifi"></i> Ollama: ' + (ollamaOk ? "доступна" : "недоступна") + '</span>';
+  }
+  fetch("/health").then(function (r) { return r.json(); }).then(renderHealth).catch(function () {
+    document.getElementById("healthBadges").innerHTML =
+      '<span class="badge text-bg-danger"><i class="bi bi-wifi"></i> сервис недоступен</span>';
+  });
+
+  /* ---------- рендер: одиночный результат ---------- */
+  function statusBadge(status) {
+    const map = {
+      ok: "text-bg-success", failed: "text-bg-danger", timeout: "text-bg-warning",
+      skipped: "text-bg-secondary", error: "text-bg-danger"
+    };
+    return '<span class="badge ' + (map[status] || "text-bg-secondary") + '">' + esc(status) + '</span>';
+  }
+  function renderExecution(exec) {
+    if (!exec) return '<p class="text-muted mb-0">нет данных о запуске</p>';
+    let html = '<div class="mb-2">' + statusBadge(exec.status);
+    if (exec.exit_code !== null && exec.exit_code !== undefined) html += ' <span class="badge text-bg-light">exit: ' + esc(exec.exit_code) + '</span>';
+    if (exec.matches_reference !== null && exec.matches_reference !== undefined) {
+      html += ' <span class="badge ' + (exec.matches_reference ? "text-bg-success" : "text-bg-danger") + '">' +
+        (exec.matches_reference ? "совпадает с эталоном" : "не совпадает с эталоном") + '</span>';
+    }
+    html += '</div>';
+    if (exec.detail) html += '<p class="small text-muted mb-2">' + esc(exec.detail) + '</p>';
+    if (exec.stdout) html += '<div class="section-title">stdout</div><pre class="report">' + esc(exec.stdout) + '</pre>';
+    if (exec.stderr) html += '<div class="section-title mt-2">stderr</div><pre class="report">' + esc(exec.stderr) + '</pre>';
+    return html;
+  }
+  function renderSingle(result) {
+    const total = Number(result.score);
+    const max = Number(result.max_score) || 0;
+    const pct = max > 0 ? Math.max(0, Math.min(100, total / max * 100)) : 0;
+    const barColor = pct >= 80 ? "bg-success" : pct >= 50 ? "bg-warning" : "bg-danger";
+    let html = '<div class="card shadow-sm mb-3"><div class="card-body">' +
+      '<div class="d-flex justify-content-between align-items-end mb-2">' +
+      '<div><div class="section-title">Итоговый балл</div>' +
+      '<div class="score-value text-primary">' + esc(total) + ' <span class="fs-4 text-muted">/ ' + esc(max) + '</span></div></div>' +
+      '<div class="text-end text-muted small">попыток исправления: ' + esc(result.retries_used) + '</div>' +
+      '</div>' +
+      '<div class="progress" style="height:.6rem"><div class="progress-bar ' + barColor + '" style="width:' + pct + '%"></div></div>' +
+      '</div></div>';
+
+    html += '<div class="card shadow-sm mb-3"><div class="card-body">' +
+      '<h6 class="section-title">Резюме</h6><p class="mb-0">' + esc(result.summary) + '</p></div></div>';
+
+    html += '<div class="card shadow-sm mb-3"><div class="card-header bg-white section-title">Снятые баллы (' +
+      (result.deductions || []).length + ')</div><ul class="list-group list-group-flush">';
+    if (!result.deductions || !result.deductions.length) {
+      html += '<li class="list-group-item text-success"><i class="bi bi-check-circle"></i> Замечаний нет</li>';
+    } else {
+      result.deductions.forEach(function (d) {
+        html += '<li class="list-group-item d-flex justify-content-between gap-3">' +
+          '<span>' + esc(d.reason) + '</span>' +
+          '<span class="badge text-bg-danger align-self-start">−' + esc(d.points) + '</span></li>';
+      });
+    }
+    html += '</ul></div>';
+
+    html += '<div class="card shadow-sm mb-3"><div class="card-header bg-white section-title">Запуск в песочнице</div>' +
+      '<div class="card-body">' + renderExecution(result.execution) + '</div></div>';
+
+    if (result.warnings && result.warnings.length) {
+      html += '<div class="alert alert-warning"><b>Предупреждения:</b><ul class="mb-0">' +
+        result.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join("") + '</ul></div>';
+    }
+    results.innerHTML = html;
+  }
+
+  /* ---------- рендер: пакетный результат ---------- */
+  function renderBatch(body) {
+    const students = body.students || [];
+    const scored = students.filter(function (s) { return s.result; });
+    const avg = scored.length ? (scored.reduce(function (a, s) { return a + Number(s.result.score); }, 0) / scored.length) : 0;
+
+    let html = '<div class="row g-3 mb-3">' +
+      '<div class="col-4"><div class="card shadow-sm text-center"><div class="card-body">' +
+      '<div class="score-value text-primary">' + students.length + '</div><div class="section-title">работ</div></div></div></div>' +
+      '<div class="col-4"><div class="card shadow-sm text-center"><div class="card-body">' +
+      '<div class="score-value text-success">' + (scored.length ? avg.toFixed(1) : "—") + '</div><div class="section-title">средний балл</div></div></div></div>' +
+      '<div class="col-4"><div class="card shadow-sm text-center"><div class="card-body">' +
+      '<div class="score-value text-secondary">' + esc(body.max_score) + '</div><div class="section-title">макс. балл</div></div></div></div>' +
+      '</div>';
+
+    html += '<div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0 table-student">' +
+      '<thead class="table-light"><tr><th>Ученик</th><th class="text-end">Балл</th><th>Резюме</th><th></th></tr></thead><tbody>';
+
+    students.forEach(function (s, i) {
+      const r = s.result;
+      if (s.error) {
+        html += '<tr><td class="fw-semibold">' + esc(s.student) + '</td>' +
+          '<td class="text-end"><span class="badge text-bg-danger">ошибка</span></td>' +
+          '<td class="text-danger small">' + esc(s.error) + '</td><td></td></tr>';
+        return;
+      }
+      const pct = r.max_score > 0 ? r.score / r.max_score * 100 : 0;
+      const color = pct >= 80 ? "text-success" : pct >= 50 ? "text-warning" : "text-danger";
+      html += '<tr data-bs-toggle="collapse" data-bs-target="#st-' + i + '">' +
+        '<td class="fw-semibold">' + esc(s.student) + '</td>' +
+        '<td class="text-end"><span class="fw-bold ' + color + '">' + esc(r.score) + '</span>' +
+        '<span class="text-muted"> / ' + esc(r.max_score) + '</span></td>' +
+        '<td class="small text-truncate" style="max-width:22rem">' + esc(r.summary) + '</td>' +
+        '<td class="text-end"><i class="bi bi-chevron-down text-muted"></i></td></tr>';
+
+      html += '<tr class="collapse" id="st-' + i + '"><td colspan="4" class="bg-light">';
+      if (r.deductions && r.deductions.length) {
+        html += '<div class="section-title">Снятые баллы</div><ul class="list-group list-group-flush mb-2">' +
+          r.deductions.map(function (d) {
+            return '<li class="list-group-item bg-transparent d-flex justify-content-between gap-3 px-0">' +
+              '<span class="small">' + esc(d.reason) + '</span>' +
+              '<span class="badge text-bg-danger align-self-start">−' + esc(d.points) + '</span></li>';
+          }).join("") + '</ul>';
+      } else {
+        html += '<p class="text-success small mb-2"><i class="bi bi-check-circle"></i> Замечаний нет</p>';
+      }
+      html += '<div class="section-title">Запуск</div>' + renderExecution(r.execution);
+      if (r.warnings && r.warnings.length) {
+        html += '<div class="alert alert-warning py-2 small mt-2 mb-0">' + r.warnings.map(esc).join("; ") + '</div>';
+      }
+      html += '</td></tr>';
+    });
+    html += '</tbody></table></div></div>';
+    results.innerHTML = html;
+  }
+
+  /* ---------- отправка ---------- */
+  function buildFormData() {
+    const mode = currentMode();
+    const fd = new FormData();
+    const task = document.getElementById("task").value.trim();
+    const reference = document.getElementById("reference").value.trim();
+    const maxScore = maxScoreEl.value;
+
+    if (task) fd.append("task", task);
+    if (reference) fd.append("reference", reference);
+    if (maxScore) fd.append("max_score", maxScore);
+    if (useStdinEl.checked && document.getElementById("stdin_data").value) {
+      fd.append("stdin_data", document.getElementById("stdin_data").value);
+    }
+    addFiles(fd, "reference_files", "reference_files");
+    if (mode === "batch") addFiles(fd, "submissions", "submissions");
+    else addFiles(fd, "files", "files");
+    return { fd: fd, mode: mode, task: task };
+  }
+  function addFiles(fd, inputId, fieldName) {
+    Array.from(document.getElementById(inputId).files).forEach(function (f) {
+      fd.append(fieldName, f, f.name);
+    });
+  }
+
+  function validate(data) {
+    const refFiles = document.getElementById("reference_files").files.length;
+    if (!data.task && !refFiles) {
+      showAlert("danger", "Укажите текст задачи или загрузите эталонное решение.");
+      return false;
+    }
+    const main = data.mode === "batch" ? "submissions" : "files";
+    if (!document.getElementById(main).files.length) {
+      showAlert("danger", data.mode === "batch" ? "Добавьте хотя бы одну работу ученика." : "Добавьте файлы решения.");
+      return false;
+    }
+    return true;
+  }
+
+  function setLoading(loading) {
+    submitBtn.disabled = loading;
+    spinner.classList.toggle("d-none", !loading);
+    submitIcon.classList.toggle("d-none", loading);
+    submitText.textContent = loading
+      ? "Проверяю… (может занять время)"
+      : (currentMode() === "batch" ? "Проверить пакет" : "Проверить");
+  }
+
+  /* ---------- этапы обработки и загрузочный индикатор ---------- */
+  const STAGES = [
+    { label: "Разбор и запуск" },
+    { label: "LLM-анализ" },
+    { label: "Оценка" },
+    { label: "Итог" }
+  ];
+  const NODE_STAGE = { prepare: 0, analyze: 1, grade: 2, validate: 3 };
+  const NEXT_HINT = {
+    prepare: "Анализирую решение моделью…",
+    analyze: "Выставляю оценку…",
+    grade: "Проверяю согласованность и формирую итог…",
+    validate: "Готово"
+  };
+  const PCT_BY_COMPLETED = [5, 25, 55, 80, 100];
+
+  function pctForCompleted(completed) {
+    const i = Math.max(0, Math.min(PCT_BY_COMPLETED.length - 1, completed + 1));
+    return PCT_BY_COMPLETED[i];
+  }
+
+  function stepperHTML(activeIndex) {
+    return STAGES.map(function (s, i) {
+      let cls = "step", inner = String(i + 1);
+      if (i < activeIndex) { cls += " done"; inner = '<i class="bi bi-check-lg"></i>'; }
+      else if (i === activeIndex) { cls += " active"; inner = '<span class="spinner-border spinner-border-sm"></span>'; }
+      return '<li class="' + cls + '"><div class="dot">' + inner + '</div>' + esc(s.label) + '</li>';
+    }).join("");
+  }
+
+  function updateProgress(title, subtitle, completed, pct) {
+    const t = document.getElementById("progressTitle");
+    if (t && title != null) t.textContent = title;
+    const s = document.getElementById("progressSubtitle");
+    if (s && subtitle != null) s.textContent = subtitle;
+    const st = document.getElementById("stepper");
+    if (st && completed != null) st.innerHTML = stepperHTML(completed + 1);
+    if (pct != null) {
+      const bar = document.getElementById("progressBar");
+      const lbl = document.getElementById("progressPct");
+      if (bar) bar.style.width = Math.max(0, Math.min(100, pct)) + "%";
+      if (lbl) lbl.textContent = Math.round(pct) + "%";
+    }
+  }
+
+  function showProgress(title, subtitle, completed, pct) {
+    results.innerHTML =
+      '<div class="card shadow-sm mb-3"><div class="card-body">' +
+      '<div class="d-flex align-items-center gap-3 mb-3">' +
+      '<div class="spinner-border text-primary" role="status" aria-hidden="true"></div>' +
+      '<div class="flex-grow-1"><div class="fw-semibold" id="progressTitle"></div>' +
+      '<div class="text-muted small" id="progressSubtitle"></div></div>' +
+      '<div class="text-muted small fw-semibold" id="progressPct"></div></div>' +
+      '<ul class="stepper" id="stepper"></ul>' +
+      '<div class="progress mt-3" style="height:.5rem">' +
+      '<div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" id="progressBar" style="width:0%"></div>' +
+      '</div></div></div>';
+    updateProgress(title, subtitle, completed, pct);
+  }
+
+  async function streamSSE(endpoint, fd, onEvent) {
+    const resp = await fetch(endpoint, { method: "POST", body: fd });
+    if (!resp.ok) {
+      let payload = null;
+      try { payload = await resp.json(); } catch (e) { /* ignore */ }
+      const detail = payload && payload.detail ? payload.detail : ("HTTP " + resp.status);
+      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const dataLine = block.split("\n").find(function (l) { return l.indexOf("data:") === 0; });
+        if (!dataLine) continue;
+        const raw = dataLine.slice(5).trim();
+        if (raw === "[DONE]") return;
+        let event;
+        try { event = JSON.parse(raw); } catch (e) { continue; }
+        onEvent(event);
+      }
+    }
+  }
+
+  async function verifySingle(fd) {
+    let result = null;
+    let completed = -1;
+    showProgress("Обработка работы", "Разбор файлов и запуск решения…", completed, pctForCompleted(completed));
+    await streamSSE("/api/v1/verify/stream", fd, function (ev) {
+      if (ev.node === "error") {
+        throw new Error(ev.detail || (ev.update && ev.update.detail) || "ошибка обработки");
+      }
+      const idx = NODE_STAGE[ev.node];
+      if (idx === undefined) return;
+      if (idx > completed) completed = idx;
+      updateProgress("Обработка работы", NEXT_HINT[ev.node], completed, pctForCompleted(completed));
+      if (ev.node === "validate" && ev.update && ev.update.result) result = ev.update.result;
+    });
+    return result;
+  }
+
+  async function verifyBatch(fd) {
+    let order = [];
+    let index = -1;
+    let completed = -1;
+    const store = {};
+
+    function overallPct(stagePct) {
+      if (!order.length) return 0;
+      const current = Math.max(0, index);
+      return (current + (stagePct || 0) / 100) / order.length * 100;
+    }
+
+    showProgress("Обработка пакета", "Подготовка…", -1, 0);
+    await streamSSE("/api/v1/verify-batch/stream", fd, function (ev) {
+      if (ev.node === "batch_start") {
+        order = (ev.update && ev.update.students) || [];
+        updateProgress("Обработка пакета", "Работ: " + order.length + ". Подготовка…", -1, 0);
+        return;
+      }
+      if (ev.node === "student_start") {
+        index += 1;
+        completed = -1;
+        const name = (ev.update && ev.update.student) || order[index] || "работа";
+        updateProgress(
+          "Обработка пакета",
+          "Работа " + (index + 1) + " из " + order.length + ": " + name,
+          completed,
+          overallPct(0)
+        );
+        return;
+      }
+      if (ev.node === "batch_done") return;
+      if (ev.node === "error") {
+        const detail = (ev.update && ev.update.detail) || ev.detail || "ошибка обработки";
+        store[ev.student] = { error: detail };
+        return;
+      }
+      const idx = NODE_STAGE[ev.node];
+      if (idx === undefined) return;
+      if (idx > completed) completed = idx;
+      const student = ev.student || order[index] || "";
+      updateProgress(
+        "Обработка пакета",
+        student ? (student + " · " + NEXT_HINT[ev.node]) : NEXT_HINT[ev.node],
+        completed,
+        overallPct(pctForCompleted(completed))
+      );
+      if (ev.node === "validate" && ev.update && ev.update.result) {
+        store[ev.student] = { result: ev.update.result };
+      }
+    });
+
+    return {
+      max_score: Number(maxScoreEl.value) || 0,
+      count: order.length,
+      students: order.map(function (name) {
+        const rec = store[name] || {};
+        return { student: name, result: rec.result || null, error: rec.error || null };
+      })
+    };
+  }
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    clearAlert();
+    const data = buildFormData();
+    if (!validate(data)) return;
+
+    setLoading(true);
+    try {
+      if (data.mode === "batch") {
+        const payload = await verifyBatch(data.fd);
+        renderBatch(payload);
+      } else {
+        const result = await verifySingle(data.fd);
+        if (!result) throw new Error("Сервис не вернул результат проверки");
+        renderSingle(result);
+      }
+    } catch (err) {
+      showAlert("danger", "Не удалось выполнить проверку: " + err.message);
+      results.innerHTML = '<div class="card shadow-sm"><div class="card-body text-center text-muted py-5">' +
+        '<i class="bi bi-x-circle fs-1"></i><p class="mb-0 mt-2">Результатов нет.</p></div></div>';
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  resetBtn.addEventListener("click", function () {
+    form.reset();
+    ["refList", "filesList", "subsList"].forEach(function (id) { document.getElementById(id).innerHTML = ""; });
+    stdinWrap.classList.add("d-none");
+    maxScoreEl.value = 100;
+    document.querySelectorAll(".mode-single").forEach(function (el) { el.classList.remove("d-none"); });
+    document.querySelectorAll(".mode-batch").forEach(function (el) { el.classList.add("d-none"); });
+    clearAlert();
+    results.innerHTML = '<div class="card shadow-sm"><div class="card-body text-center text-muted py-5">' +
+      '<i class="bi bi-clipboard-data fs-1"></i><p class="mb-0 mt-2">Здесь появятся результаты проверки.</p></div></div>';
+  });
+})();
+</script>
+</body>
+</html>
