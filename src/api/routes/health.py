@@ -8,7 +8,18 @@ from api.schemas import HealthResponse
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Проверить состояние сервиса",
+    description=(
+        "Возвращает статус API, имя используемой LLM-модели, активный бэкенд песочницы "
+        "и результат проверки доступности Ollama. Используется для мониторинга и "
+        "диагностики окружения."
+    ),
+    response_description="Текущее состояние сервиса и его зависимостей.",
+    operation_id="getHealth",
+)
 async def health(request: Request) -> HealthResponse:
     settings = request.app.state.settings
     sandbox = request.app.state.service.runner_name
