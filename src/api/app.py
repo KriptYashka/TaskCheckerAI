@@ -14,6 +14,50 @@ from services.verification import VerificationService
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
+API_DESCRIPTION = """\
+Сервис автоматической проверки учебных решений по информатике.
+
+Принимает файлы, архивы и ноутбуки `.ipynb`, по возможности запускает решение
+в песочнице, анализирует код с помощью LLM (Ollama) и возвращает итоговый балл
+со списком снятых баллов.
+
+### Как проверить API
+
+1. Откройте `POST /api/v1/verify` (одна работа) или `POST /api/v1/verify-batch`
+   (пакет работ) и нажмите **Try it out**.
+2. Загрузите файлы решения в поле `files` или `submissions`.
+3. Передайте `task` (условие) или `reference_files` (эталонное решение) — хотя бы одно.
+4. Нажмите **Execute** и посмотрите ответ.
+
+Потоковые варианты `/api/v1/verify/stream` и `/api/v1/verify-batch/stream`
+возвращают Server-Sent Events (SSE) с прогрессом проверки.
+
+Спецификация OpenAPI доступна по `/openapi.json`, альтернативная документация
+ReDoc — по `/redoc`. Инструкция по экспорту спецификации — в README.
+"""
+
+OPENAPI_TAGS = [
+    {
+        "name": "verification",
+        "description": (
+            "Проверка работ: одна работа, пакет работ и потоковые SSE-варианты. "
+            "Все эндпоинты принимают `multipart/form-data`."
+        ),
+    },
+    {
+        "name": "health",
+        "description": "Проверка состояния сервиса, модели и песочницы.",
+    },
+]
+
+SWAGGER_UI_PARAMETERS = {
+    "filter": True,
+    "displayRequestDuration": True,
+    "tryItOutEnabled": True,
+    "docExpansion": "list",
+    "defaultModelsExpandDepth": 1,
+}
+
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
@@ -26,8 +70,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="TaskCheckerAI",
-        description="Сервис верификации решений учебных задач с использованием LLM",
+        summary="Проверка учебных решений по информатике с помощью LLM",
+        description=API_DESCRIPTION,
         version="0.1.0",
+        contact={
+            "name": "TaskCheckerAI",
+            "url": "https://github.com/KriptYashka/TaskCheckerAI",
+        },
+        openapi_tags=OPENAPI_TAGS,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
         lifespan=lifespan,
     )
     app.include_router(health_router)
@@ -41,4 +95,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     return app
-
