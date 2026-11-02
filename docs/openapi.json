@@ -1,0 +1,1112 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TaskCheckerAI",
+    "summary": "Проверка учебных решений по информатике с помощью LLM",
+    "description": "Сервис автоматической проверки учебных решений по информатике.\n\nПринимает файлы, архивы и ноутбуки `.ipynb`, по возможности запускает решение\nв песочнице, анализирует код с помощью LLM (Ollama) и возвращает итоговый балл\nсо списком снятых баллов.\n\n### Как проверить API\n\n1. Откройте `POST /api/v1/verify` (одна работа) или `POST /api/v1/verify-batch`\n   (пакет работ) и нажмите **Try it out**.\n2. Загрузите файлы решения в поле `files` или `submissions`.\n3. Передайте `task` (условие) или `reference_files` (эталонное решение) — хотя бы одно.\n4. Нажмите **Execute** и посмотрите ответ.\n\nПотоковые варианты `/api/v1/verify/stream` и `/api/v1/verify-batch/stream`\nвозвращают Server-Sent Events (SSE) с прогрессом проверки.\n\nСпецификация OpenAPI доступна по `/openapi.json`, альтернативная документация\nReDoc — по `/redoc`. Инструкция по экспорту спецификации — в README.\n",
+    "contact": {
+      "name": "TaskCheckerAI",
+      "url": "https://github.com/KriptYashka/TaskCheckerAI"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Проверить состояние сервиса",
+        "description": "Возвращает статус API, имя используемой LLM-модели, активный бэкенд песочницы и результат проверки доступности Ollama. Используется для мониторинга и диагностики окружения.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Текущее состояние сервиса и его зависимостей.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/verify": {
+      "post": {
+        "tags": [
+          "verification"
+        ],
+        "summary": "Проверить одну работу",
+        "description": "Проверяет одну работу ученика и возвращает итоговый балл.\n\n**Вход:** `multipart/form-data`. Поле `files` обязательно.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).\n\n**Что происходит:** файлы разбираются (архивы распаковываются, ноутбуки превращаются\nв текст), решение по возможности запускается в песочнице, LLM анализирует код и формирует\nсписок снятых баллов. Итоговый балл считается детерминированно:\n`score = max_score - Σ deductions.points`.\n\n**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать файлы.",
+        "operationId": "verifySolution",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_verifySolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Балл, снятые баллы, резюме проверки и результат запуска.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Не переданы обязательные поля или отсутствует условие/эталон.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/verify/stream": {
+      "post": {
+        "tags": [
+          "verification"
+        ],
+        "summary": "Проверить одну работу (SSE)",
+        "description": "Проверяет одну работу и стримит прогресс в формате Server-Sent Events (SSE).\n\nПоля запроса совпадают с `POST /api/v1/verify`.\n\nКаждое событие — строка `data: <json>`. В поле `node` приходит этап проверки\n(`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.\nПоток всегда завершается событием `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
+        "operationId": "verifySolutionStream",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_verifySolutionStream"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Поток SSE-событий. Каждое событие — `data: <json>`, завершение потока — `data: [DONE]`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "data: {\"node\": \"prepare\", \"update\": {\"chunks\": 1, \"execution_status\": \"ok\"}}\n\ndata: {\"node\": \"grade\", \"update\": {\"grade\": {\"summary\": \"...\"}}}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "Не переданы обязательные поля или отсутствует условие/эталон.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/verify-batch": {
+      "post": {
+        "tags": [
+          "verification"
+        ],
+        "summary": "Проверить пакет работ",
+        "description": "Проверяет пакет работ учеников под одну задачу или один эталон.\n\n**Вход:** `multipart/form-data`. Каждый файл в поле `submissions` — отдельная работа\n(ноутбук или архив). Несколько файлов одной работы группируются по префиксу до `__`\nили по имени папки: `ivanov__main.py` и `ivanov__utils.py` → ученик `ivanov`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).\n\nРаботы, которые не удалось разобрать, возвращаются с заполненным полем `error`,\nостальные — с результатом проверки в поле `result`.",
+        "operationId": "verifyBatch",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_verifyBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Результаты по каждому ученику и количество обработанных работ.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Не переданы обязательные поля или отсутствует условие/эталон.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/verify-batch/stream": {
+      "post": {
+        "tags": [
+          "verification"
+        ],
+        "summary": "Проверить пакет работ (SSE)",
+        "description": "Проверяет пакет работ и стримит прогресс по каждому ученику в формате SSE.\n\nПоля запроса совпадают с `POST /api/v1/verify-batch`.\n\nСобытия `student_start` сообщают о начале проверки работы, далее идут этапы\n`prepare`, `analyze`, `grade`, `validate`, затем финальный `result`.\nПоток завершается событиями `batch_done` и `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
+        "operationId": "verifyBatchStream",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_verifyBatchStream"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Поток SSE-событий. Каждое событие — `data: <json>`, завершение потока — `data: [DONE]`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "data: {\"node\": \"prepare\", \"update\": {\"chunks\": 1, \"execution_status\": \"ok\"}}\n\ndata: {\"node\": \"grade\", \"update\": {\"grade\": {\"summary\": \"...\"}}}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "Не переданы обязательные поля или отсутствует условие/эталон.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BatchResponse": {
+        "properties": {
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score",
+            "description": "Максимальный балл, применённый ко всем работам пакета.",
+            "examples": [
+              10
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Количество работ в ответе.",
+            "examples": [
+              2
+            ]
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/StudentResult"
+            },
+            "type": "array",
+            "title": "Students",
+            "description": "Результаты по каждому ученику."
+          }
+        },
+        "type": "object",
+        "required": [
+          "max_score",
+          "count",
+          "students"
+        ],
+        "title": "BatchResponse",
+        "description": "Результаты пакетной проверки работ.",
+        "examples": [
+          {
+            "count": 2,
+            "max_score": 10,
+            "students": [
+              {
+                "result": {
+                  "deductions": [
+                    {
+                      "points": 3,
+                      "reason": "неполное решение"
+                    }
+                  ],
+                  "execution": {
+                    "detail": "stub",
+                    "status": "skipped"
+                  },
+                  "max_score": 10,
+                  "retries_used": 0,
+                  "score": 7.0,
+                  "summary": "Не все ветки алгоритма обработаны.",
+                  "warnings": []
+                },
+                "student": "ivanov"
+              },
+              {
+                "error": "Архив повреждён или имеет неподдерживаемый формат",
+                "student": "petrov"
+              }
+            ]
+          }
+        ]
+      },
+      "Body_verifyBatch": {
+        "properties": {
+          "submissions": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Submissions",
+            "description": "Работы учеников. Каждый файл — отдельная работа: ноутбук/архив/файл или группа файлов с префиксом 'ученик__имя'. Например: ivanov__main.py, ivanov__utils.py."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task",
+            "description": "Условие задачи (если нет эталонного решения).",
+            "examples": [
+              "Считайте два числа и выведите их сумму"
+            ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "Эталонный ответ текстом (опционально).",
+            "examples": [
+              "7"
+            ]
+          },
+          "reference_files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Files",
+            "description": "Эталонное решение: файлы, один архив или ноутбук `.ipynb` (опционально)."
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score",
+            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "examples": [
+              10
+            ]
+          },
+          "stdin_data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdin Data",
+            "description": "Входные данные, которые подаются решению при запуске.",
+            "examples": [
+              "3 4"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "submissions"
+        ],
+        "title": "Body_verifyBatch"
+      },
+      "Body_verifyBatchStream": {
+        "properties": {
+          "submissions": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Submissions",
+            "description": "Работы учеников (см. `POST /api/v1/verify-batch`). Каждый файл — отдельная работа или группа файлов с префиксом 'ученик__имя'."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task",
+            "description": "Условие задачи (если нет эталонного решения).",
+            "examples": [
+              "Считайте два числа и выведите их сумму"
+            ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "Эталонный ответ текстом (опционально).",
+            "examples": [
+              "7"
+            ]
+          },
+          "reference_files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Files",
+            "description": "Эталонное решение: файлы, один архив или ноутбук `.ipynb` (опционально)."
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score",
+            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "examples": [
+              10
+            ]
+          },
+          "stdin_data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdin Data",
+            "description": "Входные данные, которые подаются решению при запуске.",
+            "examples": [
+              "3 4"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "submissions"
+        ],
+        "title": "Body_verifyBatchStream"
+      },
+      "Body_verifySolution": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. Можно передать несколько файлов одной работы."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task",
+            "description": "Условие задачи (если нет эталонного решения).",
+            "examples": [
+              "Считайте два числа и выведите их сумму"
+            ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "Эталонный ответ текстом (опционально).",
+            "examples": [
+              "7"
+            ]
+          },
+          "reference_files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Files",
+            "description": "Эталонное решение: файлы, один архив или ноутбук `.ipynb` (опционально)."
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score",
+            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "examples": [
+              10
+            ]
+          },
+          "stdin_data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdin Data",
+            "description": "Входные данные, которые подаются решению при запуске.",
+            "examples": [
+              "3 4"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_verifySolution"
+      },
+      "Body_verifySolutionStream": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. Можно передать несколько файлов одной работы."
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task",
+            "description": "Условие задачи (если нет эталонного решения).",
+            "examples": [
+              "Считайте два числа и выведите их сумму"
+            ]
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "Эталонный ответ текстом (опционально).",
+            "examples": [
+              "7"
+            ]
+          },
+          "reference_files": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Files",
+            "description": "Эталонное решение: файлы, один архив или ноутбук `.ipynb` (опционально)."
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score",
+            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "examples": [
+              10
+            ]
+          },
+          "stdin_data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdin Data",
+            "description": "Входные данные, которые подаются решению при запуске.",
+            "examples": [
+              "3 4"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_verifySolutionStream"
+      },
+      "Deduction": {
+        "properties": {
+          "points": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Points",
+            "description": "Сколько баллов снято",
+            "examples": [
+              2.0
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reason",
+            "description": "За что сняты баллы",
+            "examples": [
+              "не обработан пустой ввод"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "points",
+          "reason"
+        ],
+        "title": "Deduction"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "Текст ошибки, пригодный для показа пользователю.",
+            "examples": [
+              "Нужно передать текст задачи или эталонное решение (файлы/ноутбук)"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "Ошибка выполнения запроса."
+      },
+      "ExecutionResult": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ExecutionStatus",
+            "description": "Статус запуска: `ok` — успешно, `failed` — ненулевой код возврата, `timeout` — превышен таймаут, `skipped` — запуск не выполнялся, `error` — ошибка запуска.",
+            "default": "skipped",
+            "examples": [
+              "ok"
+            ]
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code",
+            "description": "Код возврата процесса. `null`, если запуск не выполнялся.",
+            "examples": [
+              0
+            ]
+          },
+          "stdout": {
+            "type": "string",
+            "title": "Stdout",
+            "description": "Стандартный вывод программы (может быть обрезан по лимиту).",
+            "default": "",
+            "examples": [
+              "7\n"
+            ]
+          },
+          "stderr": {
+            "type": "string",
+            "title": "Stderr",
+            "description": "Стандартный поток ошибок программы.",
+            "default": "",
+            "examples": [
+              ""
+            ]
+          },
+          "matches_reference": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matches Reference",
+            "description": "Совпал ли вывод с эталоном. `null`, если сравнение не выполнялось.",
+            "examples": [
+              true
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "Пояснение к запуску: бэкенд песочницы, причина пропуска или ошибки.",
+            "default": "",
+            "examples": [
+              "Локальный запуск без изоляции (Docker недоступен)"
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ExecutionResult"
+      },
+      "ExecutionStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "failed",
+          "timeout",
+          "skipped",
+          "error"
+        ],
+        "title": "ExecutionStatus"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Статус API. `ok`, если приложение запущено.",
+            "examples": [
+              "ok"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "Имя LLM-модели, используемой для проверки.",
+            "examples": [
+              "qwen2.5-coder:7b"
+            ]
+          },
+          "sandbox_backend": {
+            "type": "string",
+            "title": "Sandbox Backend",
+            "description": "Активный бэкенд песочницы: `docker`, `local` или `off`.",
+            "examples": [
+              "local"
+            ]
+          },
+          "ollama_available": {
+            "type": "boolean",
+            "title": "Ollama Available",
+            "description": "Доступен ли сервер Ollama по адресу `OLLAMA_BASE_URL`.",
+            "examples": [
+              true
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "model",
+          "sandbox_backend",
+          "ollama_available"
+        ],
+        "title": "HealthResponse",
+        "description": "Состояние сервиса и его зависимостей.",
+        "examples": [
+          {
+            "model": "qwen2.5-coder:7b",
+            "ollama_available": true,
+            "sandbox_backend": "local",
+            "status": "ok"
+          }
+        ]
+      },
+      "StudentResult": {
+        "properties": {
+          "student": {
+            "type": "string",
+            "title": "Student",
+            "description": "Идентификатор ученика. Определяется по имени файла, префиксу до `__` или имени папки.",
+            "examples": [
+              "ivanov"
+            ]
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Результат проверки. `null`, если работу не удалось разобрать."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Текст ошибки разбора работы. `null`, если проверка выполнена.",
+            "examples": [
+              null
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "student"
+        ],
+        "title": "StudentResult",
+        "description": "Результат проверки работы одного ученика в пакетном запросе.",
+        "examples": [
+          {
+            "result": {
+              "deductions": [
+                {
+                  "points": 3,
+                  "reason": "неполное решение"
+                }
+              ],
+              "execution": {
+                "detail": "stub",
+                "status": "skipped"
+              },
+              "max_score": 10,
+              "retries_used": 0,
+              "score": 7.0,
+              "summary": "Не все ветки алгоритма обработаны.",
+              "warnings": []
+            },
+            "student": "ivanov"
+          },
+          {
+            "error": "Архив повреждён или имеет неподдерживаемый формат",
+            "student": "petrov"
+          }
+        ]
+      },
+      "VerificationResult": {
+        "properties": {
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Итоговый балл: `max_score - Σ deductions.points`.",
+            "examples": [
+              8.0
+            ]
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score",
+            "description": "Максимально возможный балл для этой работы.",
+            "examples": [
+              10
+            ]
+          },
+          "deductions": {
+            "items": {
+              "$ref": "#/components/schemas/Deduction"
+            },
+            "type": "array",
+            "title": "Deductions",
+            "description": "Список снятых баллов с причинами."
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "Краткое резюме проверки.",
+            "examples": [
+              "Решение в целом верное, есть замечания по надёжности."
+            ]
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionResult",
+            "description": "Результат запуска решения в песочнице."
+          },
+          "retries_used": {
+            "type": "integer",
+            "title": "Retries Used",
+            "description": "Сколько раз оценка запрашивалась повторно из-за несогласованности.",
+            "default": 0,
+            "examples": [
+              0
+            ]
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Предупреждения валидации и ограничения контекста."
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "max_score",
+          "deductions",
+          "summary",
+          "execution"
+        ],
+        "title": "VerificationResult"
+      },
+      "VerifyResponse": {
+        "properties": {
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Итоговый балл: `max_score - Σ deductions.points`.",
+            "examples": [
+              8.0
+            ]
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score",
+            "description": "Максимально возможный балл для этой работы.",
+            "examples": [
+              10
+            ]
+          },
+          "deductions": {
+            "items": {
+              "$ref": "#/components/schemas/Deduction"
+            },
+            "type": "array",
+            "title": "Deductions",
+            "description": "Список снятых баллов с причинами."
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "Краткое резюме проверки.",
+            "examples": [
+              "Решение в целом верное, есть замечания по надёжности."
+            ]
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionResult",
+            "description": "Результат запуска решения в песочнице."
+          },
+          "retries_used": {
+            "type": "integer",
+            "title": "Retries Used",
+            "description": "Сколько раз оценка запрашивалась повторно из-за несогласованности.",
+            "default": 0,
+            "examples": [
+              0
+            ]
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Предупреждения валидации и ограничения контекста."
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "max_score",
+          "deductions",
+          "summary",
+          "execution"
+        ],
+        "title": "VerifyResponse",
+        "description": "Результат проверки одной работы.",
+        "examples": [
+          {
+            "deductions": [
+              {
+                "points": 2,
+                "reason": "не обработан пустой ввод"
+              }
+            ],
+            "execution": {
+              "detail": "Локальный запуск без изоляции (Docker недоступен)",
+              "exit_code": 0,
+              "matches_reference": true,
+              "status": "ok",
+              "stderr": "",
+              "stdout": "7\n"
+            },
+            "max_score": 10,
+            "retries_used": 0,
+            "score": 8.0,
+            "summary": "Решение в целом верное, замечания по надёжности.",
+            "warnings": []
+          }
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "verification",
+      "description": "Проверка работ: одна работа, пакет работ и потоковые SSE-варианты. Все эндпоинты принимают `multipart/form-data`."
+    },
+    {
+      "name": "health",
+      "description": "Проверка состояния сервиса, модели и песочницы."
+    }
+  ]
+}
