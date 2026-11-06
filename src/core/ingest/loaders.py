@@ -3,13 +3,14 @@ from __future__ import annotations
 import io
 import tarfile
 import zipfile
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath
 
 from charset_normalizer import from_bytes
 
 from config import Settings
 from core.ingest.notebook import is_notebook, notebook_to_text
 from core.models import FileBundle, SourceFile
+from core.paths import safe_relative_path
 
 ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tar.gz", ".tgz", ".gz"}
 TEXT_EXTENSIONS = {
@@ -19,21 +20,25 @@ TEXT_EXTENSIONS = {
     ".cfg", ".ini", ".toml", ".properties", ".in", ".out", ".ipynb",
 }
 SKIP_NAMES = {".git", ".idea", "__pycache__", "node_modules", ".venv", "venv", ".DS_Store"}
-MAX_NAME_LENGTH = 512
 
 
 class IngestError(ValueError):
     pass
 
 
+def _safe_name(name: str, source: str) -> str:
+    try:
+        return safe_relative_path(name)
+    except ValueError as exc:
+        raise IngestError(f"Небезопасный путь ({source}): {name[:80]!r}: {exc}") from exc
+
+
 def _safe_member_name(name: str) -> str:
-    normalized = str(PurePosixPath(name.replace("\\", "/")))
-    parts = PurePosixPath(normalized).parts
-    if any(p == ".." for p in parts) or normalized.startswith("/"):
-        raise IngestError(f"Небезопасный путь в архиве: {name}")
-    if len(normalized) > MAX_NAME_LENGTH:
-        raise IngestError(f"Слишком длинное имя файла в архиве: {name[:80]}...")
-    return normalized
+    return _safe_name(name, "архив")
+
+
+def _safe_upload_name(name: str) -> str:
+    return _safe_name(name, "загрузка")
 
 
 def _should_skip(name: str) -> bool:
@@ -105,18 +110,31 @@ def _add_file(bundle: FileBundle, settings: Settings, path: str, data: bytes) ->
 
 
 def _read_archive_member(archive, settings: Settings, bundle: FileBundle) -> None:
-    for member in archive.getmembers():
+    members = archive.getmembers()
+    if len(members) > settings.max_archive_entries:
+        raise IngestError(
+            f"В архиве слишком много записей: {len(members)} "
+            f"(лимит {settings.max_archive_entries})"
+        )
+
+    archive_total = 0
+    for member in members:
         if not member.isfile():
             continue
         name = _safe_member_name(member.name)
-        size = member.size
+        size = max(0, member.size)
+        # Служебные файлы тоже учитываем в общем бюджете: иначе архив из
+        # множества пропускаемых файлов обходит лимит на распаковку.
+        archive_total += size
+        if archive_total > settings.max_total_bytes:
+            raise IngestError(
+                f"Превышен общий лимит размера файлов: {settings.max_total_bytes} байт"
+            )
+        if _should_skip(name):
+            continue
         if size > settings.max_file_bytes:
             raise IngestError(
                 f"Файл '{name}' ({size} байт) превышает лимит {settings.max_file_bytes} байт"
-            )
-        if bundle.total_bytes + size > settings.max_total_bytes:
-            raise IngestError(
-                f"Превышен общий лимит размера файлов: {settings.max_total_bytes} байт"
             )
         handle = archive.extractfile(member)
         if handle is None:
@@ -130,18 +148,30 @@ def load_archive(data: bytes, filename: str, settings: Settings) -> FileBundle:
     try:
         if lower.endswith(".zip"):
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                for info in zf.infolist():
+                infos = zf.infolist()
+                if len(infos) > settings.max_archive_entries:
+                    raise IngestError(
+                        f"В архиве слишком много записей: {len(infos)} "
+                        f"(лимит {settings.max_archive_entries})"
+                    )
+                archive_total = 0
+                for info in infos:
                     if info.is_dir():
                         continue
                     name = _safe_member_name(info.filename)
-                    if info.file_size > settings.max_file_bytes:
+                    size = max(0, info.file_size)
+                    archive_total += size
+                    if archive_total > settings.max_total_bytes:
                         raise IngestError(
-                            f"Файл '{name}' ({info.file_size} байт) превышает лимит "
-                            f"{settings.max_file_bytes} байт"
+                            f"Превышен общий лимит размера файлов: "
+                            f"{settings.max_total_bytes} байт"
                         )
-                    if bundle.total_bytes + info.file_size > settings.max_total_bytes:
+                    if _should_skip(name):
+                        continue
+                    if size > settings.max_file_bytes:
                         raise IngestError(
-                            f"Превышен общий лимит размера файлов: {settings.max_total_bytes} байт"
+                            f"Файл '{name}' ({size} байт) превышает лимит "
+                            f"{settings.max_file_bytes} байт"
                         )
                     _add_file(bundle, settings, name, zf.read(info))
         elif lower.endswith((".tar", ".tar.gz", ".tgz")):
@@ -161,16 +191,18 @@ def load_files(items: list[tuple[str, bytes]], settings: Settings) -> FileBundle
     if not items:
         raise IngestError("Не передано ни одного файла")
     bundle = FileBundle()
-    for name, data in items:
-        if len(name) > MAX_NAME_LENGTH:
-            raise IngestError(f"Слишком длинное имя файла: {name[:80]}...")
+    total_bytes = 0
+    for raw_name, data in items:
+        name = _safe_upload_name(raw_name)
         if len(data) > settings.max_file_bytes:
             raise IngestError(
                 f"Файл '{name}' ({len(data)} байт) превышает лимит {settings.max_file_bytes} байт"
             )
-        if bundle.total_bytes + len(data) > settings.max_total_bytes:
+        # Учитываем и пропускаемые файлы: они всё равно занимают память при разборе.
+        total_bytes += len(data)
+        if total_bytes > settings.max_total_bytes:
             raise IngestError(f"Превышен общий лимит размера файлов: {settings.max_total_bytes} байт")
-        _add_file(bundle, settings, name.replace("\\", "/"), data)
+        _add_file(bundle, settings, name, data)
 
     if not bundle.files:
         raise IngestError("Среди переданных файлов нет пригодных (возможно, все бинарные)")
