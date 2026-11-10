@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from api.schemas import BatchResponse, ErrorResponse, StudentResult, VerifyResponse
-from core.ingest.loaders import IngestError
-from services.verification import VerificationService
+from config import Settings
+from core.ingest.loaders import IngestError, is_archive_name
+from services.verification import VerificationService, describe_error, is_timeout_error
 
 router = APIRouter(prefix="/api/v1", tags=["verification"])
+logger = logging.getLogger(__name__)
+
+MAX_TASK_CHARS = 20_000
+MAX_REFERENCE_CHARS = 20_000
+MAX_STDIN_CHARS = 64_000
+MAX_SCORE_LIMIT = 1_000
+READ_CHUNK_SIZE = 64 * 1024
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
 
 SOURCE_RULE = (
     "Нужно передать хотя бы одно из полей: `task` (условие задачи) "
@@ -38,7 +52,11 @@ VERIFY_DESCRIPTION = f"""\
 список снятых баллов. Итоговый балл считается детерминированно:
 `score = max_score - Σ deductions.points`.
 
-**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать файлы.
+**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать
+файлы; `413` — превышен лимит загрузки; `503`/`504` — LLM недоступна или превысила
+таймаут; `429` — превышена частота запросов; `401` — неверный API-ключ.
+
+Если на сервере задан `API_KEY`, передайте его в заголовке `X-API-Key`.
 """
 
 VERIFY_STREAM_DESCRIPTION = f"""\
@@ -48,6 +66,7 @@ VERIFY_STREAM_DESCRIPTION = f"""\
 
 Каждое событие — строка `data: <json>`. В поле `node` приходит этап проверки
 (`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.
+При ошибке LLM/песочницы приходит событие `node: "error"` с полем `detail`.
 Поток всегда завершается событием `data: [DONE]`.
 
 {SOURCE_RULE}
@@ -73,7 +92,9 @@ VERIFY_BATCH_STREAM_DESCRIPTION = f"""\
 
 События `student_start` сообщают о начале проверки работы, далее идут этапы
 `prepare`, `analyze`, `grade`, `validate`, затем финальный `result`.
-Поток завершается событиями `batch_done` и `data: [DONE]`.
+Ошибка одной работы приходит как событие `node: "error"` с полем `student` и не
+прерывает обработку остальных. Поток завершается событиями `batch_done` и
+`data: [DONE]`.
 
 {SOURCE_RULE}
 """
@@ -83,9 +104,29 @@ ERROR_RESPONSES = {
         "model": ErrorResponse,
         "description": "Не переданы обязательные поля или отсутствует условие/эталон.",
     },
+    401: {
+        "model": ErrorResponse,
+        "description": "Неверный или отсутствующий API-ключ (если на сервере задан `API_KEY`).",
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Превышен лимит размера или количества загруженных файлов.",
+    },
     422: {
         "model": ErrorResponse,
         "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
+    },
+    429: {
+        "model": ErrorResponse,
+        "description": "Превышена частота запросов (если включён rate limit).",
+    },
+    503: {
+        "model": ErrorResponse,
+        "description": "LLM или песочница временно недоступны.",
+    },
+    504: {
+        "model": ErrorResponse,
+        "description": "Превышено время ожидания ответа LLM.",
     },
 }
 
@@ -115,16 +156,73 @@ def _service(request: Request) -> VerificationService:
     return request.app.state.service
 
 
-async def _collect(files: Optional[list[UploadFile]]) -> list[tuple[str, bytes]]:
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+
+def _service_http_error(exc: Exception) -> HTTPException:
+    status_code = 504 if is_timeout_error(exc) else 503
+    return HTTPException(status_code=status_code, detail=describe_error(exc))
+
+
+async def _collect(
+    files: Optional[list[UploadFile]],
+    settings: Settings,
+    field: str,
+) -> list[tuple[str, bytes]]:
     uploads: list[tuple[str, bytes]] = []
+    total_bytes = 0
+
     for upload in files or []:
-        data = await upload.read()
-        uploads.append((upload.filename or "unnamed", data))
+        if len(uploads) >= settings.max_files:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Превышено максимальное количество файлов ({field}): "
+                    f"{settings.max_files}"
+                ),
+            )
+
+        name = upload.filename or "unnamed"
+        per_file_limit = (
+            settings.max_total_bytes if is_archive_name(name) else settings.max_file_bytes
+        )
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = await upload.read(READ_CHUNK_SIZE)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > per_file_limit:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"Файл '{name}' превышает лимит {per_file_limit} байт"
+                    ),
+                )
+            if total_bytes + size > settings.max_total_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "Превышен общий лимит размера файлов: "
+                        f"{settings.max_total_bytes} байт"
+                    ),
+                )
+            chunks.append(chunk)
+
+        total_bytes += size
+        uploads.append((name, b"".join(chunks)))
+
     return uploads
 
 
-async def _collect_required(files: Optional[list[UploadFile]], field: str) -> list[tuple[str, bytes]]:
-    uploads = await _collect(files)
+async def _collect_required(
+    files: Optional[list[UploadFile]],
+    field: str,
+    settings: Settings,
+) -> list[tuple[str, bytes]]:
+    uploads = await _collect(files, settings, field)
     if not uploads:
         raise HTTPException(status_code=400, detail=f"Не передан ни один файл ({field})")
     return uploads
@@ -152,11 +250,13 @@ async def verify(
     files: list[UploadFile] = File(..., description=FILES_DESCRIPTION),
     task: Optional[str] = Form(
         None,
+        max_length=MAX_TASK_CHARS,
         description="Условие задачи (если нет эталонного решения).",
         examples=["Считайте два числа и выведите их сумму"],
     ),
     reference: Optional[str] = Form(
         None,
+        max_length=MAX_REFERENCE_CHARS,
         description="Эталонный ответ текстом (опционально).",
         examples=["7"],
     ),
@@ -165,18 +265,24 @@ async def verify(
     ),
     max_score: Optional[int] = Form(
         None,
-        description="Максимальный балл. По умолчанию берётся из конфигурации.",
+        ge=1,
+        le=MAX_SCORE_LIMIT,
+        description=(
+            "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации."
+        ),
         examples=[10],
     ),
     stdin_data: Optional[str] = Form(
         None,
+        max_length=MAX_STDIN_CHARS,
         description="Входные данные, которые подаются решению при запуске.",
         examples=["3 4"],
     ),
 ) -> VerifyResponse:
     service = _service(request)
-    uploads = await _collect_required(files, "files")
-    reference_uploads = await _collect(reference_files)
+    settings = request.app.state.settings
+    uploads = await _collect_required(files, "files", settings)
+    reference_uploads = await _collect(reference_files, settings, "reference_files")
     _validate_source(task, reference_uploads)
     try:
         result = await service.verify(
@@ -189,6 +295,9 @@ async def verify(
         )
     except IngestError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Ошибка проверки одной работы")
+        raise _service_http_error(exc) from exc
     return VerifyResponse(**result.model_dump())
 
 
@@ -206,11 +315,13 @@ async def verify_stream(
     files: list[UploadFile] = File(..., description=FILES_DESCRIPTION),
     task: Optional[str] = Form(
         None,
+        max_length=MAX_TASK_CHARS,
         description="Условие задачи (если нет эталонного решения).",
         examples=["Считайте два числа и выведите их сумму"],
     ),
     reference: Optional[str] = Form(
         None,
+        max_length=MAX_REFERENCE_CHARS,
         description="Эталонный ответ текстом (опционально).",
         examples=["7"],
     ),
@@ -219,18 +330,24 @@ async def verify_stream(
     ),
     max_score: Optional[int] = Form(
         None,
-        description="Максимальный балл. По умолчанию берётся из конфигурации.",
+        ge=1,
+        le=MAX_SCORE_LIMIT,
+        description=(
+            "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации."
+        ),
         examples=[10],
     ),
     stdin_data: Optional[str] = Form(
         None,
+        max_length=MAX_STDIN_CHARS,
         description="Входные данные, которые подаются решению при запуске.",
         examples=["3 4"],
     ),
 ) -> StreamingResponse:
     service = _service(request)
-    uploads = await _collect_required(files, "files")
-    reference_uploads = await _collect(reference_files)
+    settings = request.app.state.settings
+    uploads = await _collect_required(files, "files", settings)
+    reference_uploads = await _collect(reference_files, settings, "reference_files")
     _validate_source(task, reference_uploads)
 
     async def event_stream():
@@ -243,12 +360,23 @@ async def verify_stream(
                 stdin_data=stdin_data,
                 reference_uploads=reference_uploads,
             ):
-                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                yield _sse(event)
         except IngestError as exc:
-            yield f"data: {json.dumps({'node': 'error', 'detail': str(exc)}, ensure_ascii=False)}\n\n"
+            yield _sse({"node": "error", "detail": str(exc)})
+        except Exception as exc:
+            logger.exception("Ошибка SSE-проверки одной работы")
+            yield _sse(
+                {
+                    "node": "error",
+                    "detail": describe_error(exc),
+                    "status": 504 if is_timeout_error(exc) else 503,
+                }
+            )
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(), media_type="text/event-stream", headers=SSE_HEADERS
+    )
 
 
 @router.post(
@@ -272,11 +400,13 @@ async def verify_batch(
     ),
     task: Optional[str] = Form(
         None,
+        max_length=MAX_TASK_CHARS,
         description="Условие задачи (если нет эталонного решения).",
         examples=["Считайте два числа и выведите их сумму"],
     ),
     reference: Optional[str] = Form(
         None,
+        max_length=MAX_REFERENCE_CHARS,
         description="Эталонный ответ текстом (опционально).",
         examples=["7"],
     ),
@@ -285,33 +415,43 @@ async def verify_batch(
     ),
     max_score: Optional[int] = Form(
         None,
-        description="Максимальный балл. По умолчанию берётся из конфигурации.",
+        ge=1,
+        le=MAX_SCORE_LIMIT,
+        description=(
+            "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации."
+        ),
         examples=[10],
     ),
     stdin_data: Optional[str] = Form(
         None,
+        max_length=MAX_STDIN_CHARS,
         description="Входные данные, которые подаются решению при запуске.",
         examples=["3 4"],
     ),
 ) -> BatchResponse:
     service = _service(request)
-    items = await _collect_required(submissions, "submissions")
-    reference_uploads = await _collect(reference_files)
+    settings = request.app.state.settings
+    items = await _collect_required(submissions, "submissions", settings)
+    reference_uploads = await _collect(reference_files, settings, "reference_files")
     _validate_source(task, reference_uploads)
-    results = await service.verify_batch(
-        task=task or "",
-        submissions=items,
-        reference=reference,
-        max_score=max_score,
-        stdin_data=stdin_data,
-        reference_uploads=reference_uploads,
-    )
+    try:
+        results = await service.verify_batch(
+            task=task or "",
+            submissions=items,
+            reference=reference,
+            max_score=max_score,
+            stdin_data=stdin_data,
+            reference_uploads=reference_uploads,
+        )
+    except Exception as exc:
+        logger.exception("Ошибка пакетной проверки")
+        raise _service_http_error(exc) from exc
     students = [
         StudentResult(student=student, result=result, error=error)
         for student, result, error in results
     ]
     return BatchResponse(
-        max_score=max_score or service.settings.default_max_score,
+        max_score=max_score if max_score is not None else settings.default_max_score,
         count=len(students),
         students=students,
     )
@@ -337,11 +477,13 @@ async def verify_batch_stream(
     ),
     task: Optional[str] = Form(
         None,
+        max_length=MAX_TASK_CHARS,
         description="Условие задачи (если нет эталонного решения).",
         examples=["Считайте два числа и выведите их сумму"],
     ),
     reference: Optional[str] = Form(
         None,
+        max_length=MAX_REFERENCE_CHARS,
         description="Эталонный ответ текстом (опционально).",
         examples=["7"],
     ),
@@ -350,18 +492,24 @@ async def verify_batch_stream(
     ),
     max_score: Optional[int] = Form(
         None,
-        description="Максимальный балл. По умолчанию берётся из конфигурации.",
+        ge=1,
+        le=MAX_SCORE_LIMIT,
+        description=(
+            "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации."
+        ),
         examples=[10],
     ),
     stdin_data: Optional[str] = Form(
         None,
+        max_length=MAX_STDIN_CHARS,
         description="Входные данные, которые подаются решению при запуске.",
         examples=["3 4"],
     ),
 ) -> StreamingResponse:
     service = _service(request)
-    items = await _collect_required(submissions, "submissions")
-    reference_uploads = await _collect(reference_files)
+    settings = request.app.state.settings
+    items = await _collect_required(submissions, "submissions", settings)
+    reference_uploads = await _collect(reference_files, settings, "reference_files")
     _validate_source(task, reference_uploads)
 
     async def event_stream():
@@ -374,9 +522,20 @@ async def verify_batch_stream(
                 stdin_data=stdin_data,
                 reference_uploads=reference_uploads,
             ):
-                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                yield _sse(event)
         except IngestError as exc:
-            yield f"data: {json.dumps({'node': 'error', 'detail': str(exc)}, ensure_ascii=False)}\n\n"
+            yield _sse({"node": "error", "detail": str(exc)})
+        except Exception as exc:
+            logger.exception("Ошибка SSE-проверки пакета")
+            yield _sse(
+                {
+                    "node": "error",
+                    "detail": describe_error(exc),
+                    "status": 504 if is_timeout_error(exc) else 503,
+                }
+            )
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(), media_type="text/event-stream", headers=SSE_HEADERS
+    )

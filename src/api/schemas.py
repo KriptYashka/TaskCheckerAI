@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,7 +26,7 @@ class VerifyResponse(VerificationResult):
                         "stdout": "7\n",
                         "stderr": "",
                         "matches_reference": True,
-                        "detail": "Локальный запуск без изоляции (Docker недоступен)",
+                        "detail": "Docker-песочница",
                     },
                     "retries_used": 0,
                     "warnings": [],
@@ -39,8 +39,12 @@ class VerifyResponse(VerificationResult):
 class ErrorResponse(BaseModel):
     """Ошибка выполнения запроса."""
 
-    detail: str = Field(
-        description="Текст ошибки, пригодный для показа пользователю.",
+    detail: str | list[dict[str, Any]] = Field(
+        description=(
+            "Текст ошибки, пригодный для показа пользователю. Для ошибок валидации "
+            "FastAPI (`422`) здесь может быть список объектов с полями `type`, `loc`, "
+            "`msg` и `input`."
+        ),
         examples=["Нужно передать текст задачи или эталонное решение (файлы/ноутбук)"],
     )
 

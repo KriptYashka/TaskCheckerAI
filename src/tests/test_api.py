@@ -122,3 +122,138 @@ def test_verify_batch_endpoint_with_stub():
     assert body["count"] == 2
     assert {s["student"] for s in body["students"]} == {"ivanov", "petrov"}
     assert all(s["result"]["score"] == 7 for s in body["students"])
+
+
+class FailingService(StubService):
+    async def verify(self, *args, **kwargs):
+        raise RuntimeError("Ollama is down")
+
+
+class TimeoutService(StubService):
+    async def verify(self, *args, **kwargs):
+        raise TimeoutError("LLM timeout")
+
+
+class FailingStreamService(StubService):
+    async def verify_stream(self, *args, **kwargs):
+        yield {"node": "prepare", "update": {"chunks": 1}}
+        raise RuntimeError("Ollama is down")
+
+
+def test_verify_rejects_non_positive_max_score():
+    app = make_app()
+    with TestClient(app) as client:
+        app.state.service = StubService()
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t", "max_score": "0"},
+            files={"files": ("main.py", b"print(1)", "text/x-python")},
+        )
+    assert resp.status_code == 422
+
+
+def test_verify_rejects_too_large_max_score():
+    app = make_app()
+    with TestClient(app) as client:
+        app.state.service = StubService()
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t", "max_score": "1001"},
+            files={"files": ("main.py", b"print(1)", "text/x-python")},
+        )
+    assert resp.status_code == 422
+
+
+def test_verify_rejects_oversized_upload_early():
+    settings = Settings(_env_file=None, sandbox_enabled=False, max_total_bytes=10)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        app.state.service = StubService()
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t"},
+            files={"files": ("main.py", b"print('too large')", "text/x-python")},
+        )
+    assert resp.status_code == 413
+
+
+def test_verify_returns_503_when_llm_fails():
+    app = make_app()
+    with TestClient(app) as client:
+        app.state.service = FailingService()
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t"},
+            files={"files": ("main.py", b"print(1)", "text/x-python")},
+        )
+    assert resp.status_code == 503
+
+
+def test_verify_returns_504_on_timeout():
+    app = make_app()
+    with TestClient(app) as client:
+        app.state.service = TimeoutService()
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t"},
+            files={"files": ("main.py", b"print(1)", "text/x-python")},
+        )
+    assert resp.status_code == 504
+
+
+def test_stream_emits_error_and_done_on_llm_failure():
+    app = make_app()
+    with TestClient(app) as client:
+        app.state.service = FailingStreamService()
+        resp = client.post(
+            "/api/v1/verify/stream",
+            data={"task": "t"},
+            files={"files": ("main.py", b"print(1)", "text/x-python")},
+        )
+    assert resp.status_code == 200
+    assert "data: [DONE]" in resp.text
+    assert '"node": "error"' in resp.text
+    assert '"status": 503' in resp.text
+
+
+def test_api_key_is_enforced_when_configured():
+    settings = Settings(_env_file=None, sandbox_enabled=False, api_key="secret")
+    app = create_app(settings)
+    payload = {
+        "data": {"task": "t"},
+        "files": {"files": ("main.py", b"print(1)", "text/x-python")},
+    }
+    with TestClient(app) as client:
+        app.state.service = StubService()
+        assert client.post("/api/v1/verify", **payload).status_code == 401
+        assert (
+            client.post(
+                "/api/v1/verify", headers={"X-API-Key": "wrong"}, **payload
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                "/api/v1/verify", headers={"X-API-Key": "secret"}, **payload
+            ).status_code
+            == 200
+        )
+
+
+def test_rate_limit_returns_429():
+    settings = Settings(
+        _env_file=None,
+        sandbox_enabled=False,
+        rate_limit_per_minute=1,
+    )
+    app = create_app(settings)
+    payload = {
+        "data": {"task": "t"},
+        "files": {"files": ("main.py", b"print(1)", "text/x-python")},
+    }
+    with TestClient(app) as client:
+        app.state.service = StubService()
+        assert client.post("/api/v1/verify", **payload).status_code == 200
+        response = client.post("/api/v1/verify", **payload)
+    assert response.status_code == 429
+    assert "Retry-After" in response.headers

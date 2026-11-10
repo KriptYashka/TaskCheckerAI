@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import math
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routes.health import router as health_router
 from api.routes.verify import router as verify_router
+from api.security import RateLimiter, require_api_key
 from config import Settings, get_settings
 from services.verification import VerificationService
 
@@ -59,6 +62,46 @@ SWAGGER_UI_PARAMETERS = {
 }
 
 
+BODY_SIZE_OVERHEAD = 1024 * 1024
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Отсекает заведомо слишком большие multipart-запросы до разбора."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/api/"):
+            settings = request.app.state.settings
+            limit = settings.max_total_bytes + BODY_SIZE_OVERHEAD
+            raw_length = request.headers.get("content-length")
+            if raw_length:
+                try:
+                    length = int(raw_length)
+                except ValueError:
+                    length = 0
+                if length > limit:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": f"Размер запроса превышает лимит {limit} байт"},
+                    )
+        return await call_next(request)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        settings = request.app.state.settings
+        limit = settings.rate_limit_per_minute
+        if limit > 0 and request.url.path.startswith("/api/"):
+            client = request.client.host if request.client else "unknown"
+            retry_after = request.app.state.rate_limiter.check(client, limit)
+            if retry_after is not None:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Слишком много запросов. Попробуйте позже."},
+                    headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+                )
+        return await call_next(request)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -84,8 +127,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         swagger_ui_parameters=SWAGGER_UI_PARAMETERS,
         lifespan=lifespan,
     )
+    app.state.settings = settings
+    app.state.rate_limiter = RateLimiter()
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RequestSizeLimitMiddleware)
+
     app.include_router(health_router)
-    app.include_router(verify_router)
+    app.include_router(verify_router, dependencies=[Depends(require_api_key)])
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
