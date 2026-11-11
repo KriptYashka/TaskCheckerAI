@@ -14,8 +14,13 @@ services:
       LLM_NUM_CTX: "16384"
       API_HOST: 0.0.0.0
       API_PORT: "8000"
-      # Внутри контейнера Docker-песочница недоступна — используем локальный subprocess
+      # Внутри контейнера Docker-песочница недоступна. Локальный запуск включается
+      # только явно и не даёт изоляции — не публикуйте такой контейнер в интернет.
       SANDBOX_BACKEND: local
+      SANDBOX_ALLOW_LOCAL: "true"
+      # Минимальная защита API: задайте ключ и лимит запросов для сетевого доступа.
+      API_KEY: ""
+      RATE_LIMIT_PER_MINUTE: "60"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

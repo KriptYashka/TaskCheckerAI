@@ -39,7 +39,7 @@
           "verification"
         ],
         "summary": "Проверить одну работу",
-        "description": "Проверяет одну работу ученика и возвращает итоговый балл.\n\n**Вход:** `multipart/form-data`. Поле `files` обязательно.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).\n\n**Что происходит:** файлы разбираются (архивы распаковываются, ноутбуки превращаются\nв текст), решение по возможности запускается в песочнице, LLM анализирует код и формирует\nсписок снятых баллов. Итоговый балл считается детерминированно:\n`score = max_score - Σ deductions.points`.\n\n**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать файлы.",
+        "description": "Проверяет одну работу ученика и возвращает итоговый балл.\n\n**Вход:** `multipart/form-data`. Поле `files` обязательно.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).\n\n**Что происходит:** файлы разбираются (архивы распаковываются, ноутбуки превращаются\nв текст), решение по возможности запускается в песочнице, LLM анализирует код и формирует\nсписок снятых баллов. Итоговый балл считается детерминированно:\n`score = max_score - Σ deductions.points`.\n\n**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать\nфайлы; `413` — превышен лимит загрузки; `503`/`504` — LLM недоступна или превысила\nтаймаут; `429` — превышена частота запросов; `401` — неверный API-ключ.\n\nЕсли на сервере задан `API_KEY`, передайте его в заголовке `X-API-Key`.",
         "operationId": "verifySolution",
         "requestBody": {
           "content": {
@@ -72,6 +72,26 @@
               }
             }
           },
+          "401": {
+            "description": "Неверный или отсутствующий API-ключ (если на сервере задан `API_KEY`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен лимит размера или количества загруженных файлов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
             "content": {
@@ -81,8 +101,43 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Превышена частота запросов (если включён rate limit).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "LLM или песочница временно недоступны.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Превышено время ожидания ответа LLM.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     },
     "/api/v1/verify/stream": {
@@ -91,7 +146,7 @@
           "verification"
         ],
         "summary": "Проверить одну работу (SSE)",
-        "description": "Проверяет одну работу и стримит прогресс в формате Server-Sent Events (SSE).\n\nПоля запроса совпадают с `POST /api/v1/verify`.\n\nКаждое событие — строка `data: <json>`. В поле `node` приходит этап проверки\n(`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.\nПоток всегда завершается событием `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
+        "description": "Проверяет одну работу и стримит прогресс в формате Server-Sent Events (SSE).\n\nПоля запроса совпадают с `POST /api/v1/verify`.\n\nКаждое событие — строка `data: <json>`. В поле `node` приходит этап проверки\n(`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.\nПри ошибке LLM/песочницы приходит событие `node: \"error\"` с полем `detail`.\nПоток всегда завершается событием `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
         "operationId": "verifySolutionStream",
         "requestBody": {
           "content": {
@@ -125,6 +180,26 @@
               }
             }
           },
+          "401": {
+            "description": "Неверный или отсутствующий API-ключ (если на сервере задан `API_KEY`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен лимит размера или количества загруженных файлов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
             "content": {
@@ -134,8 +209,43 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Превышена частота запросов (если включён rate limit).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "LLM или песочница временно недоступны.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Превышено время ожидания ответа LLM.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     },
     "/api/v1/verify-batch": {
@@ -177,6 +287,26 @@
               }
             }
           },
+          "401": {
+            "description": "Неверный или отсутствующий API-ключ (если на сервере задан `API_KEY`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен лимит размера или количества загруженных файлов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
             "content": {
@@ -186,8 +316,43 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Превышена частота запросов (если включён rate limit).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "LLM или песочница временно недоступны.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Превышено время ожидания ответа LLM.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     },
     "/api/v1/verify-batch/stream": {
@@ -196,7 +361,7 @@
           "verification"
         ],
         "summary": "Проверить пакет работ (SSE)",
-        "description": "Проверяет пакет работ и стримит прогресс по каждому ученику в формате SSE.\n\nПоля запроса совпадают с `POST /api/v1/verify-batch`.\n\nСобытия `student_start` сообщают о начале проверки работы, далее идут этапы\n`prepare`, `analyze`, `grade`, `validate`, затем финальный `result`.\nПоток завершается событиями `batch_done` и `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
+        "description": "Проверяет пакет работ и стримит прогресс по каждому ученику в формате SSE.\n\nПоля запроса совпадают с `POST /api/v1/verify-batch`.\n\nСобытия `student_start` сообщают о начале проверки работы, далее идут этапы\n`prepare`, `analyze`, `grade`, `validate`, затем финальный `result`.\nОшибка одной работы приходит как событие `node: \"error\"` с полем `student` и не\nпрерывает обработку остальных. Поток завершается событиями `batch_done` и\n`data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
         "operationId": "verifyBatchStream",
         "requestBody": {
           "content": {
@@ -230,6 +395,26 @@
               }
             }
           },
+          "401": {
+            "description": "Неверный или отсутствующий API-ключ (если на сервере задан `API_KEY`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен лимит размера или количества загруженных файлов.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Не удалось разобрать входные файлы, архив или ноутбук.",
             "content": {
@@ -239,8 +424,43 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Превышена частота запросов (если включён rate limit).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "LLM или песочница временно недоступны.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Превышено время ожидания ответа LLM.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     }
   },
@@ -328,7 +548,8 @@
           "task": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -343,7 +564,8 @@
           "reference": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -374,14 +596,16 @@
           "max_score": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Max Score",
-            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "description": "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации.",
             "examples": [
               10
             ]
@@ -389,7 +613,8 @@
           "stdin_data": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64000
               },
               {
                 "type": "null"
@@ -422,7 +647,8 @@
           "task": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -437,7 +663,8 @@
           "reference": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -468,14 +695,16 @@
           "max_score": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Max Score",
-            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "description": "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации.",
             "examples": [
               10
             ]
@@ -483,7 +712,8 @@
           "stdin_data": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64000
               },
               {
                 "type": "null"
@@ -516,7 +746,8 @@
           "task": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -531,7 +762,8 @@
           "reference": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -562,14 +794,16 @@
           "max_score": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Max Score",
-            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "description": "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации.",
             "examples": [
               10
             ]
@@ -577,7 +811,8 @@
           "stdin_data": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64000
               },
               {
                 "type": "null"
@@ -610,7 +845,8 @@
           "task": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -625,7 +861,8 @@
           "reference": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 20000
               },
               {
                 "type": "null"
@@ -656,14 +893,16 @@
           "max_score": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Max Score",
-            "description": "Максимальный балл. По умолчанию берётся из конфигурации.",
+            "description": "Максимальный балл (от 1 до 1000). По умолчанию берётся из конфигурации.",
             "examples": [
               10
             ]
@@ -671,7 +910,8 @@
           "stdin_data": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64000
               },
               {
                 "type": "null"
@@ -721,9 +961,20 @@
       "ErrorResponse": {
         "properties": {
           "detail": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            ],
             "title": "Detail",
-            "description": "Текст ошибки, пригодный для показа пользователю.",
+            "description": "Текст ошибки, пригодный для показа пользователю. Для ошибок валидации FastAPI (`422`) здесь может быть список объектов с полями `type`, `loc`, `msg` и `input`.",
             "examples": [
               "Нужно передать текст задачи или эталонное решение (файлы/ноутбук)"
             ]
@@ -1082,7 +1333,7 @@
               }
             ],
             "execution": {
-              "detail": "Локальный запуск без изоляции (Docker недоступен)",
+              "detail": "Docker-песочница",
               "exit_code": 0,
               "matches_reference": true,
               "status": "ok",
@@ -1096,6 +1347,14 @@
             "warnings": []
           }
         ]
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "description": "API-ключ. Проверяется только если на сервере задан `API_KEY`. Передаётся в заголовке `X-API-Key`.",
+        "in": "header",
+        "name": "X-API-Key"
       }
     }
   },

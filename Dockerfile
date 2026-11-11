@@ -21,7 +21,8 @@ USER appuser
 ENV API_HOST=0.0.0.0 \
     API_PORT=8000 \
     OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-    SANDBOX_BACKEND=local
+    SANDBOX_BACKEND=docker \
+    SANDBOX_ALLOW_LOCAL=false
 
 EXPOSE 8000
 
