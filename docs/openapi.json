@@ -3,7 +3,7 @@
   "info": {
     "title": "TaskCheckerAI",
     "summary": "Проверка учебных решений по информатике с помощью LLM",
-    "description": "Сервис автоматической проверки учебных решений по информатике.\n\nПринимает файлы, архивы и ноутбуки `.ipynb`, по возможности запускает решение\nв песочнице, анализирует код с помощью LLM (Ollama) и возвращает итоговый балл\nсо списком снятых баллов.\n\n### Как проверить API\n\n1. Откройте `POST /api/v1/verify` (одна работа) или `POST /api/v1/verify-batch`\n   (пакет работ) и нажмите **Try it out**.\n2. Загрузите файлы решения в поле `files` или `submissions`.\n3. Передайте `task` (условие) или `reference_files` (эталонное решение) — хотя бы одно.\n4. Нажмите **Execute** и посмотрите ответ.\n\nПотоковые варианты `/api/v1/verify/stream` и `/api/v1/verify-batch/stream`\nвозвращают Server-Sent Events (SSE) с прогрессом проверки.\n\nСпецификация OpenAPI доступна по `/openapi.json`, альтернативная документация\nReDoc — по `/redoc`. Инструкция по экспорту спецификации — в README.\n",
+    "description": "Сервис автоматической проверки учебных решений по информатике.\n\nПринимает файлы, архивы, ноутбуки `.ipynb` или исходный код текстом, по возможности\nзапускает решение в песочнице, анализирует код с помощью LLM (Ollama) и возвращает\nитоговый балл со списком снятых баллов.\n\n### Как проверить API\n\n1. Откройте `POST /api/v1/verify` (одна работа) или `POST /api/v1/verify-batch`\n   (пакет работ) и нажмите **Try it out**.\n2. Загрузите файлы решения в поле `files`/`submissions` или передайте код текстом\n   в поле `texts` (для одной работы).\n3. Передайте `task` (условие) или `reference_files` (эталонное решение) — хотя бы одно.\n4. Нажмите **Execute** и посмотрите ответ.\n\nПотоковые варианты `/api/v1/verify/stream` и `/api/v1/verify-batch/stream`\nвозвращают Server-Sent Events (SSE) с прогрессом проверки.\n\nСпецификация OpenAPI доступна по `/openapi.json`, альтернативная документация\nReDoc — по `/redoc`. Инструкция по экспорту спецификации — в README.\n",
     "contact": {
       "name": "TaskCheckerAI",
       "url": "https://github.com/KriptYashka/TaskCheckerAI"
@@ -39,7 +39,7 @@
           "verification"
         ],
         "summary": "Проверить одну работу",
-        "description": "Проверяет одну работу ученика и возвращает итоговый балл.\n\n**Вход:** `multipart/form-data`. Поле `files` обязательно.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).\n\n**Что происходит:** файлы разбираются (архивы распаковываются, ноутбуки превращаются\nв текст), решение по возможности запускается в песочнице, LLM анализирует код и формирует\nсписок снятых баллов. Итоговый балл считается детерминированно:\n`score = max_score - Σ deductions.points`.\n\n**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать\nфайлы; `413` — превышен лимит загрузки; `503`/`504` — LLM недоступна или превысила\nтаймаут; `429` — превышена частота запросов; `401` — неверный API-ключ.\n\nЕсли на сервере задан `API_KEY`, передайте его в заголовке `X-API-Key`.",
+        "description": "Проверяет одну работу ученика и возвращает итоговый балл.\n\n**Вход:** `multipart/form-data`.\n\nНужно передать хотя бы одно из полей: `files` (файлы/архив/ноутбук) или `texts` (исходный код текстом).\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).\n\n**Что происходит:** файлы разбираются (архивы распаковываются, ноутбуки превращаются\nв текст), решение по возможности запускается в песочнице, LLM анализирует код и формирует\nсписок снятых баллов. Итоговый балл считается детерминированно:\n`score = max_score - Σ deductions.points`.\n\n**Ошибки:** `400` — не переданы обязательные поля; `422` — не удалось разобрать\nфайлы; `413` — превышен лимит загрузки; `503`/`504` — LLM недоступна или превысила\nтаймаут; `429` — превышена частота запросов; `401` — неверный API-ключ.\n\nЕсли на сервере задан `API_KEY`, передайте его в заголовке `X-API-Key`.",
         "operationId": "verifySolution",
         "requestBody": {
           "content": {
@@ -48,8 +48,7 @@
                 "$ref": "#/components/schemas/Body_verifySolution"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -146,7 +145,7 @@
           "verification"
         ],
         "summary": "Проверить одну работу (SSE)",
-        "description": "Проверяет одну работу и стримит прогресс в формате Server-Sent Events (SSE).\n\nПоля запроса совпадают с `POST /api/v1/verify`.\n\nКаждое событие — строка `data: <json>`. В поле `node` приходит этап проверки\n(`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.\nПри ошибке LLM/песочницы приходит событие `node: \"error\"` с полем `detail`.\nПоток всегда завершается событием `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
+        "description": "Проверяет одну работу и стримит прогресс в формате Server-Sent Events (SSE).\n\nПоля запроса совпадают с `POST /api/v1/verify`.\n\nКаждое событие — строка `data: <json>`. В поле `node` приходит этап проверки\n(`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.\nПри ошибке LLM/песочницы приходит событие `node: \"error\"` с полем `detail`.\nПоток всегда завершается событием `data: [DONE]`.\n\nНужно передать хотя бы одно из полей: `files` (файлы/архив/ноутбук) или `texts` (исходный код текстом).\n\nНужно передать хотя бы одно из полей: `task` (условие задачи) или `reference_files` (эталонное решение).",
         "operationId": "verifySolutionStream",
         "requestBody": {
           "content": {
@@ -155,8 +154,7 @@
                 "$ref": "#/components/schemas/Body_verifySolutionStream"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -735,13 +733,35 @@
       "Body_verifySolution": {
         "properties": {
           "files": {
-            "items": {
-              "type": "string",
-              "contentMediaType": "application/octet-stream"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Files",
-            "description": "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. Можно передать несколько файлов одной работы."
+            "description": "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. Можно передать несколько файлов одной работы. Необязательно, если передан `texts`."
+          },
+          "texts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Texts",
+            "description": "Исходный код программы (Python) в виде массива строк. Каждый элемент — отдельный файл. Без файлов первый текст получает имя `main.py` (точка входа), остальные — `text_2.py`, `text_3.py` и т. д. Передаётся повторяющимися полями формы."
           },
           "task": {
             "anyOf": [
@@ -826,21 +846,40 @@
           }
         },
         "type": "object",
-        "required": [
-          "files"
-        ],
         "title": "Body_verifySolution"
       },
       "Body_verifySolutionStream": {
         "properties": {
           "files": {
-            "items": {
-              "type": "string",
-              "contentMediaType": "application/octet-stream"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Files",
-            "description": "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. Можно передать несколько файлов одной работы."
+            "description": "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. Можно передать несколько файлов одной работы. Необязательно, если передан `texts`."
+          },
+          "texts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Texts",
+            "description": "Исходный код программы (Python) в виде массива строк. Каждый элемент — отдельный файл. Без файлов первый текст получает имя `main.py` (точка входа), остальные — `text_2.py`, `text_3.py` и т. д. Передаётся повторяющимися полями формы."
           },
           "task": {
             "anyOf": [
@@ -925,9 +964,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "files"
-        ],
         "title": "Body_verifySolutionStream"
       },
       "Deduction": {

@@ -86,12 +86,99 @@ def test_verify_endpoint_with_stub():
     assert body["deductions"][0]["reason"] == "неполное решение"
 
 
-def test_verify_endpoint_requires_files():
+def test_verify_endpoint_requires_files_or_texts():
     app = make_app()
     with TestClient(app) as client:
         app.state.service = StubService()
         resp = client.post("/api/v1/verify", data={"task": "t"})
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+    assert "files" in resp.json()["detail"]
+    assert "texts" in resp.json()["detail"]
+
+
+class CapturingService(StubService):
+    def __init__(self):
+        self.uploads = None
+
+    async def verify(self, task, uploads, **kwargs):
+        self.uploads = uploads
+        return await super().verify(task, uploads, **kwargs)
+
+    async def verify_stream(self, task, uploads, **kwargs):
+        self.uploads = uploads
+        yield {"node": "validate", "update": {}}
+
+
+def test_verify_accepts_texts_without_files():
+    app = make_app()
+    service = CapturingService()
+    with TestClient(app) as client:
+        app.state.service = service
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t", "texts": ["print(1)"]},
+        )
+    assert resp.status_code == 200
+    assert service.uploads == [("main.py", b"print(1)")]
+
+
+def test_verify_accepts_multiple_texts():
+    app = make_app()
+    service = CapturingService()
+    with TestClient(app) as client:
+        app.state.service = service
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t", "texts": ["print(1)", "print(2)"]},
+        )
+    assert resp.status_code == 200
+    assert service.uploads == [
+        ("main.py", b"print(1)"),
+        ("text_2.py", b"print(2)"),
+    ]
+
+
+def test_verify_stream_accepts_texts():
+    app = make_app()
+    service = CapturingService()
+    with TestClient(app) as client:
+        app.state.service = service
+        resp = client.post(
+            "/api/v1/verify/stream",
+            data={"task": "t", "texts": ["print(1)"]},
+        )
+    assert resp.status_code == 200
+    assert service.uploads == [("main.py", b"print(1)")]
+    assert "data: [DONE]" in resp.text
+
+
+def test_verify_combines_files_and_texts_without_name_collision():
+    app = make_app()
+    service = CapturingService()
+    with TestClient(app) as client:
+        app.state.service = service
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t", "texts": ["print(2)"]},
+            files={"files": ("main.py", b"print(1)", "text/x-python")},
+        )
+    assert resp.status_code == 200
+    assert service.uploads == [
+        ("main.py", b"print(1)"),
+        ("text_1.py", b"print(2)"),
+    ]
+
+
+def test_verify_rejects_oversized_text_early():
+    settings = Settings(_env_file=None, sandbox_enabled=False, max_total_bytes=10)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        app.state.service = StubService()
+        resp = client.post(
+            "/api/v1/verify",
+            data={"task": "t", "texts": ["print('too large')"]},
+        )
+    assert resp.status_code == 413
 
 
 def test_verify_requires_task_or_reference():

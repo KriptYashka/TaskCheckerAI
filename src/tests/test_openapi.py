@@ -71,16 +71,20 @@ def test_verify_request_body_documented():
     content = request_body["content"]["multipart/form-data"]
     body_schema = resolve_ref(spec, content["schema"]["$ref"])
 
-    assert request_body["required"] is True
-    assert body_schema["required"] == ["files"]
+    assert request_body.get("required") is not True
+    assert "required" not in body_schema
     assert set(body_schema["properties"]) == {
         "files",
+        "texts",
         "task",
         "reference",
         "reference_files",
         "max_score",
         "stdin_data",
     }
+    texts_schema = body_schema["properties"]["texts"]["anyOf"][0]
+    assert texts_schema["type"] == "array"
+    assert texts_schema["items"]["type"] == "string"
     assert body_schema["properties"]["task"]["examples"]
     assert body_schema["properties"]["max_score"]["examples"] == [10]
 

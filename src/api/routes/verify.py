@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import PurePosixPath
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -33,7 +34,18 @@ SOURCE_RULE = (
 
 FILES_DESCRIPTION = (
     "Файлы решения, один архив (`zip`/`tar`/`tar.gz`) или ноутбук `.ipynb`. "
-    "Можно передать несколько файлов одной работы."
+    "Можно передать несколько файлов одной работы. Необязательно, если передан `texts`."
+)
+
+TEXTS_DESCRIPTION = (
+    "Исходный код программы (Python) в виде массива строк. Каждый элемент — отдельный "
+    "файл. Без файлов первый текст получает имя `main.py` (точка входа), остальные — "
+    "`text_2.py`, `text_3.py` и т. д. Передаётся повторяющимися полями формы."
+)
+
+INPUT_RULE = (
+    "Нужно передать хотя бы одно из полей: `files` (файлы/архив/ноутбук) "
+    "или `texts` (исходный код текстом)."
 )
 
 REFERENCE_FILES_DESCRIPTION = (
@@ -43,7 +55,9 @@ REFERENCE_FILES_DESCRIPTION = (
 VERIFY_DESCRIPTION = f"""\
 Проверяет одну работу ученика и возвращает итоговый балл.
 
-**Вход:** `multipart/form-data`. Поле `files` обязательно.
+**Вход:** `multipart/form-data`.
+
+{INPUT_RULE}
 
 {SOURCE_RULE}
 
@@ -68,6 +82,8 @@ VERIFY_STREAM_DESCRIPTION = f"""\
 (`prepare`, `analyze`, `grade`, `validate`), в поле `update` — краткий результат этапа.
 При ошибке LLM/песочницы приходит событие `node: "error"` с полем `detail`.
 Поток всегда завершается событием `data: [DONE]`.
+
+{INPUT_RULE}
 
 {SOURCE_RULE}
 """
@@ -228,6 +244,77 @@ async def _collect_required(
     return uploads
 
 
+def _text_filenames(existing: list[tuple[str, bytes]], count: int) -> list[str]:
+    used = {PurePosixPath(name.replace("\\", "/")).name for name, _ in existing}
+    names: list[str] = []
+    for index in range(count):
+        if not existing and index == 0:
+            base = "main.py"
+        else:
+            base = f"text_{index + 1}.py"
+        name = base
+        suffix = 2
+        stem = PurePosixPath(base).stem
+        while name in used:
+            name = f"{stem}_{suffix}.py"
+            suffix += 1
+        used.add(name)
+        names.append(name)
+    return names
+
+
+def _collect_texts(
+    texts: Optional[list[str]],
+    settings: Settings,
+    existing: list[tuple[str, bytes]],
+) -> list[tuple[str, bytes]]:
+    cleaned = [text for text in (texts or []) if text and text.strip()]
+    if not cleaned:
+        return []
+    if len(existing) + len(cleaned) > settings.max_files:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Превышено максимальное количество файлов: {settings.max_files}",
+        )
+
+    names = _text_filenames(existing, len(cleaned))
+    total_bytes = sum(len(data) for _, data in existing)
+    uploads: list[tuple[str, bytes]] = []
+    for name, text in zip(names, cleaned):
+        data = text.encode("utf-8")
+        if len(data) > settings.max_file_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Текст '{name}' превышает лимит {settings.max_file_bytes} байт",
+            )
+        total_bytes += len(data)
+        if total_bytes > settings.max_total_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Превышен общий лимит размера файлов: "
+                    f"{settings.max_total_bytes} байт"
+                ),
+            )
+        uploads.append((name, data))
+    return uploads
+
+
+async def _collect_solution_inputs(
+    files: Optional[list[UploadFile]],
+    texts: Optional[list[str]],
+    settings: Settings,
+) -> list[tuple[str, bytes]]:
+    uploads = await _collect(files, settings, "files")
+    uploads.extend(_collect_texts(texts, settings, uploads))
+    if not uploads:
+        raise HTTPException(
+            status_code=400,
+            detail="Передайте файлы (files) или тексты кода (texts)",
+        )
+    return uploads
+
+
 def _validate_source(task: Optional[str], reference_files: list[tuple[str, bytes]]) -> None:
     if not (task and task.strip()) and not reference_files:
         raise HTTPException(
@@ -247,7 +334,8 @@ def _validate_source(task: Optional[str], reference_files: list[tuple[str, bytes
 )
 async def verify(
     request: Request,
-    files: list[UploadFile] = File(..., description=FILES_DESCRIPTION),
+    files: Optional[list[UploadFile]] = File(None, description=FILES_DESCRIPTION),
+    texts: Optional[list[str]] = Form(None, description=TEXTS_DESCRIPTION),
     task: Optional[str] = Form(
         None,
         max_length=MAX_TASK_CHARS,
@@ -281,7 +369,7 @@ async def verify(
 ) -> VerifyResponse:
     service = _service(request)
     settings = request.app.state.settings
-    uploads = await _collect_required(files, "files", settings)
+    uploads = await _collect_solution_inputs(files, texts, settings)
     reference_uploads = await _collect(reference_files, settings, "reference_files")
     _validate_source(task, reference_uploads)
     try:
@@ -312,7 +400,8 @@ async def verify(
 )
 async def verify_stream(
     request: Request,
-    files: list[UploadFile] = File(..., description=FILES_DESCRIPTION),
+    files: Optional[list[UploadFile]] = File(None, description=FILES_DESCRIPTION),
+    texts: Optional[list[str]] = Form(None, description=TEXTS_DESCRIPTION),
     task: Optional[str] = Form(
         None,
         max_length=MAX_TASK_CHARS,
@@ -346,7 +435,7 @@ async def verify_stream(
 ) -> StreamingResponse:
     service = _service(request)
     settings = request.app.state.settings
-    uploads = await _collect_required(files, "files", settings)
+    uploads = await _collect_solution_inputs(files, texts, settings)
     reference_uploads = await _collect(reference_files, settings, "reference_files")
     _validate_source(task, reference_uploads)
 
