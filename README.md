@@ -474,6 +474,7 @@ Swagger UI и в `docs/openapi.json` всегда совпадают.
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Адрес Ollama |
 | `LLM_MODEL` | `qwen2.5-coder:7b` | Имя модели |
 | `LLM_TEMPERATURE` | `0` | Температура генерации |
+| `LLM_SEED` | `42` | Зерно генерации для воспроизводимости |
 | `LLM_REQUEST_TIMEOUT` | `300` | Таймаут запроса к LLM, с |
 | `LLM_NUM_CTX` | `16384` | Размер окна контекста модели (`num_ctx`) |
 | `DEFAULT_MAX_SCORE` | `100` | Максимальный балл по умолчанию |

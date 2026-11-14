@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5-coder:7b"
     llm_temperature: float = 0.0
+    # Фиксированное зерно делает оценку воспроизводимой при temperature=0.
+    llm_seed: int = 42
     llm_request_timeout: float = 300.0
     llm_num_ctx: int = 16_384
 

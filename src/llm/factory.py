@@ -12,6 +12,7 @@ def create_chat_model(settings: Settings) -> BaseChatModel:
         model=settings.llm_model,
         base_url=settings.ollama_base_url,
         temperature=settings.llm_temperature,
+        seed=settings.llm_seed,
         num_ctx=settings.llm_num_ctx,
         client_kwargs={"timeout": settings.llm_request_timeout},
     )
