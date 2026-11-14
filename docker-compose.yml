@@ -6,7 +6,7 @@ services:
     image: taskcheckerai:latest
     container_name: taskcheckerai
     ports:
-      - "8000:8000"
+      - "10480:8000"
     environment:
       # Ollama на хосте (host.docker.internal работает в Docker Desktop и через extra_hosts на Linux)
       OLLAMA_BASE_URL: http://host.docker.internal:11434
