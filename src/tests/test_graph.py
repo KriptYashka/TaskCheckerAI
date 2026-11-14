@@ -6,6 +6,7 @@ from langchain_core.runnables import RunnableLambda
 from config import Settings
 from core.models import Deduction, ExecutionResult, ExecutionStatus, GradeResult
 from graph.builder import build_graph
+from graph.nodes.grade import make_grade_node
 
 
 class DummyRunner:
@@ -70,6 +71,56 @@ def test_graph_retries_when_grade_invalid_then_fixes():
     assert final["result"].score == 10
     assert calls["n"] == 2
     assert final["result"].retries_used == 1
+
+
+def test_grade_prompt_includes_student_code():
+    settings = make_settings()
+    captured = {}
+
+    def grade_fn(prompt_value):
+        captured["text"] = prompt_value.to_string()
+        return GradeResult(deductions=[], summary="ok")
+
+    node = make_grade_node(settings, RunnableLambda(grade_fn))
+    node(
+        {
+            "task": "создать класс",
+            "reference_context": "эталон",
+            "max_score": 10,
+            "analyses": ["код создаёт класс"],
+            "context": "===== ФАЙЛ: main.py =====\nprint('unique_code_marker')",
+        }
+    )
+
+    assert "unique_code_marker" in captured["text"]
+
+
+def test_grade_fix_prompt_includes_code_and_analysis():
+    settings = make_settings()
+    captured = {}
+
+    def grade_fn(prompt_value):
+        captured["text"] = prompt_value.to_string()
+        return GradeResult(deductions=[], summary="ok")
+
+    node = make_grade_node(settings, RunnableLambda(grade_fn))
+    node(
+        {
+            "task": "создать класс",
+            "reference_context": "эталон",
+            "max_score": 10,
+            "analyses": ["unique_analysis_marker"],
+            "context": "===== ФАЙЛ: main.py =====\nprint('unique_code_marker')",
+            "grade_errors": ["сумма превышает максимум"],
+            "grade": GradeResult(
+                deductions=[Deduction(points=20, reason="слишком много")],
+                summary="плохо",
+            ),
+        }
+    )
+
+    assert "unique_code_marker" in captured["text"]
+    assert "unique_analysis_marker" in captured["text"]
 
 
 def test_graph_sanitizes_after_max_retries():

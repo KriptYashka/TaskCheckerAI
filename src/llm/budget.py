@@ -5,6 +5,7 @@ from config import Settings
 CHARS_PER_TOKEN = 3.0
 PROMPT_OVERHEAD_CHARS = 4_000
 MIN_REFERENCE_CHARS = 1_000
+MIN_CODE_CHARS = 1_000
 TRUNCATION_MARKER = "\n...[фрагмент обрезан по лимиту контекста модели]"
 
 
@@ -36,3 +37,15 @@ def fit_reference(reference: str, reserved_chars: int, settings: Settings) -> st
     if allowed < MIN_REFERENCE_CHARS:
         allowed = MIN_REFERENCE_CHARS
     return truncate(reference, allowed)
+
+
+def fit_code(code: str, reserved_chars: int, settings: Settings) -> str:
+    """Trim the student's code so that the whole prompt fits the context window.
+
+    Код — главный источник фактов при выставлении оценки, поэтому при нехватке
+    места он не должен исчезать полностью: сохраняем хотя бы ``MIN_CODE_CHARS``.
+    """
+    allowed = prompt_char_budget(settings) - reserved_chars
+    if allowed < MIN_CODE_CHARS:
+        allowed = MIN_CODE_CHARS
+    return truncate(code, allowed)

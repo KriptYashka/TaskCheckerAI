@@ -5,7 +5,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from config import Settings
 from core.models import ExecutionResult, ExecutionStatus
 from graph.state import GraphState
-from llm.budget import fit_reference, truncate
+from llm.budget import MIN_CODE_CHARS, fit_code, fit_reference, truncate
 from llm.prompts import GRADE_FIX_PROMPT, GRADE_PROMPT
 
 TASK_FALLBACK = "текст задачи не задан отдельно — ориентируйся на эталонное решение"
@@ -41,11 +41,16 @@ def make_grade_node(settings: Settings, model: BaseChatModel):
         task = state.get("task") or TASK_FALLBACK
         execution = _execution_text(state.get("execution"))
         reference = state.get("reference_context") or "не предоставлен"
+        code = state.get("context") or ""
 
-        def fit(reserved: int) -> str:
+        def fit_reference_section(reserved: int) -> str:
             if reference == "не предоставлен":
                 return reference
-            return fit_reference(reference, reserved, settings)
+            # Оставляем место хотя бы на минимальный фрагмент кода ученика.
+            return fit_reference(reference, reserved + MIN_CODE_CHARS, settings)
+
+        def fit_code_section(reference_text: str, reserved: int) -> str:
+            return fit_code(code, reserved + len(reference_text), settings)
 
         errors = state.get("grade_errors") or []
         previous = state.get("grade")
@@ -56,11 +61,13 @@ def make_grade_node(settings: Settings, model: BaseChatModel):
             reserved = (
                 len(task) + len(execution) + len(analysis) + len(errors_text) + len(previous_json)
             )
+            reference_text = fit_reference_section(reserved)
             payload = {
                 "task": task,
-                "reference": fit(reserved),
+                "reference": reference_text,
                 "max_score": state["max_score"],
                 "execution": execution,
+                "code": fit_code_section(reference_text, reserved),
                 "analysis": analysis,
                 "errors": errors_text,
                 "previous": previous_json,
@@ -68,11 +75,13 @@ def make_grade_node(settings: Settings, model: BaseChatModel):
             return {"grade": fix_chain.invoke(payload), "grade_errors": []}
 
         reserved = len(task) + len(execution) + len(analysis)
+        reference_text = fit_reference_section(reserved)
         base_input = {
             "task": task,
-            "reference": fit(reserved),
+            "reference": reference_text,
             "max_score": state["max_score"],
             "execution": execution,
+            "code": fit_code_section(reference_text, reserved),
             "analysis": analysis,
         }
 

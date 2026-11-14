@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from config import Settings
 from llm.budget import (
+    MIN_CODE_CHARS,
     MIN_REFERENCE_CHARS,
     PROMPT_OVERHEAD_CHARS,
     TRUNCATION_MARKER,
+    fit_code,
     fit_reference,
     prompt_char_budget,
     truncate,
@@ -45,3 +47,18 @@ def test_fit_reference_never_empty_on_huge_reserved():
     settings = make_settings(llm_num_ctx=8192)
     result = fit_reference("r" * 100, 10_000_000, settings)
     assert 0 < len(result) <= MIN_REFERENCE_CHARS
+
+
+def test_fit_code_respects_budget():
+    settings = make_settings(llm_num_ctx=8192)
+    code = "c" * 100_000
+    reserved = 5_000
+    result = fit_code(code, reserved, settings)
+    assert len(result) <= prompt_char_budget(settings) - reserved
+    assert result.endswith(TRUNCATION_MARKER)
+
+
+def test_fit_code_never_empty_on_huge_reserved():
+    settings = make_settings(llm_num_ctx=8192)
+    result = fit_code("c" * 100, 10_000_000, settings)
+    assert 0 < len(result) <= MIN_CODE_CHARS
