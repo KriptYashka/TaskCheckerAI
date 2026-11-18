@@ -12,7 +12,7 @@ from core.ingest.notebook import is_notebook, notebook_to_text
 from core.models import FileBundle, SourceFile
 from core.paths import safe_relative_path
 
-ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tar.gz", ".tgz", ".gz"}
+ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tar.gz", ".tgz", ".gz", ".7z"}
 TEXT_EXTENSIONS = {
     ".py", ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".java", ".js", ".ts",
     ".kt", ".go", ".rs", ".pas", ".cs", ".php", ".rb", ".sql", ".txt", ".md",
@@ -142,6 +142,69 @@ def _read_archive_member(archive, settings: Settings, bundle: FileBundle) -> Non
         _add_file(bundle, settings, name, handle.read())
 
 
+def _read_7z_archive(data: bytes, filename: str, settings: Settings, bundle: FileBundle) -> None:
+    try:
+        import py7zr
+        from py7zr import exceptions as z7_exceptions
+        from py7zr.io import BytesIOFactory
+    except ImportError as exc:
+        raise IngestError("Для чтения архивов 7z необходим пакет py7zr") from exc
+
+    try:
+        with py7zr.SevenZipFile(
+            io.BytesIO(data), "r", max_extract_size=settings.max_total_bytes
+        ) as archive:
+            if archive.needs_password():
+                raise IngestError(f"Архив '{filename}' защищён паролем")
+
+            entries = archive.list()
+            if len(entries) > settings.max_archive_entries:
+                raise IngestError(
+                    f"В архиве слишком много записей: {len(entries)} "
+                    f"(лимит {settings.max_archive_entries})"
+                )
+
+            archive_total = 0
+            targets: list[str] = []
+            for entry in entries:
+                if entry.is_symlink or not entry.is_file:
+                    continue
+                name = _safe_member_name(entry.filename)
+                size = max(0, entry.uncompressed or 0)
+                # Служебные файлы тоже учитываем в общем бюджете: иначе архив из
+                # множества пропускаемых файлов обходит лимит на распаковку.
+                archive_total += size
+                if archive_total > settings.max_total_bytes:
+                    raise IngestError(
+                        f"Превышен общий лимит размера файлов: {settings.max_total_bytes} байт"
+                    )
+                if _should_skip(name):
+                    continue
+                if size > settings.max_file_bytes:
+                    raise IngestError(
+                        f"Файл '{name}' ({size} байт) превышает лимит {settings.max_file_bytes} байт"
+                    )
+                targets.append(entry.filename)
+
+            if not targets:
+                return
+
+            factory = BytesIOFactory(settings.max_file_bytes + 1)
+            archive.extract(factory=factory, targets=targets)
+            for entry_name in targets:
+                product = factory.products.get(entry_name)
+                if product is None:
+                    continue
+                product.seek(0)
+                _add_file(bundle, settings, _safe_member_name(entry_name), product.read())
+    except (
+        z7_exceptions.ArchiveError,
+        z7_exceptions.PasswordRequired,
+        z7_exceptions.AbsolutePathError,
+    ) as exc:
+        raise IngestError(f"Повреждённый архив '{filename}': {exc}") from exc
+
+
 def load_archive(data: bytes, filename: str, settings: Settings) -> FileBundle:
     bundle = FileBundle()
     lower = filename.lower()
@@ -177,6 +240,8 @@ def load_archive(data: bytes, filename: str, settings: Settings) -> FileBundle:
         elif lower.endswith((".tar", ".tar.gz", ".tgz")):
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
                 _read_archive_member(tf, settings, bundle)
+        elif lower.endswith(".7z"):
+            _read_7z_archive(data, filename, settings, bundle)
         else:
             raise IngestError(f"Неподдерживаемый формат архива: {filename}")
     except (zipfile.BadZipFile, tarfile.TarError) as exc:
@@ -211,7 +276,7 @@ def load_files(items: list[tuple[str, bytes]], settings: Settings) -> FileBundle
 
 def is_archive_name(filename: str) -> bool:
     lower = filename.lower()
-    return any(lower.endswith(ext) for ext in (".zip", ".tar", ".tar.gz", ".tgz"))
+    return any(lower.endswith(ext) for ext in (".zip", ".tar", ".tar.gz", ".tgz", ".7z"))
 
 
 def load_upload(filename: str, data: bytes, settings: Settings) -> FileBundle:
