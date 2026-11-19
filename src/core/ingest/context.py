@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.ingest.git import GIT_REPORT_NAME
 from core.models import FileBundle, SourceFile
 
 PRIORITY_NAMES = (
@@ -10,7 +11,11 @@ PRIORITY_NAMES = (
 
 def _priority(name: str) -> tuple[int, int, str]:
     base = name.rsplit("/", 1)[-1]
-    if base in PRIORITY_NAMES:
+    if base == GIT_REPORT_NAME:
+        # Отчёт по истории Git важен для заданий про Git — ставим его первым,
+        # чтобы он не выпал из бюджета контекста.
+        rank = -1
+    elif base in PRIORITY_NAMES:
         rank = 0
     elif base.endswith(".py"):
         rank = 1

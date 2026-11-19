@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+import zlib
 
 import pytest
 
@@ -22,6 +23,83 @@ def make_7z(entries: dict[str, bytes]) -> bytes:
         for name, data in entries.items():
             zf.writestr(data, name)
     return buf.getvalue()
+
+
+_GIT_AUTHOR = "Иван Ученик <ivan@example.com> 1699999999 +0300"
+
+
+def _git_loose_object(kind: str, body: bytes) -> bytes:
+    raw = kind.encode() + b" " + str(len(body)).encode() + b"\x00" + body
+    return zlib.compress(raw)
+
+
+def _git_commit_body(tree_sha: str, parents: list[str], message: str) -> bytes:
+    lines = [f"tree {tree_sha}"]
+    lines += [f"parent {parent}" for parent in parents]
+    lines.append(f"author {_GIT_AUTHOR}")
+    lines.append(f"committer {_GIT_AUTHOR}")
+    return ("\n".join(lines) + "\n\n" + message + "\n").encode("utf-8")
+
+
+def make_git_members() -> dict[str, bytes]:
+    """Мини-репозиторий из двух loose-коммитов (без pack-файлов)."""
+    first, second = "a" * 40, "b" * 40
+    return {
+        ".git/HEAD": b"ref: refs/heads/main\n",
+        ".git/refs/heads/main": second.encode(),
+        f".git/objects/{first[:2]}/{first[2:]}": _git_loose_object(
+            "commit", _git_commit_body("c" * 40, [], "Первый коммит")
+        ),
+        f".git/objects/{second[:2]}/{second[2:]}": _git_loose_object(
+            "commit", _git_commit_body("c" * 40, [first], "Второй коммит")
+        ),
+    }
+
+
+def test_zip_git_history_report():
+    settings = make_settings()
+    entries = {"proj/main.py": b"print(1)", "proj/README.md": b"# readme"}
+    entries.update({f"proj/{name}": data for name, data in make_git_members().items()})
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+
+    bundle = load_archive(buf.getvalue(), "proj.zip", settings)
+    paths = {f.path for f in bundle.files}
+    assert "git-history.txt" in paths
+    # Сам каталог .git в файлы проекта не попадает.
+    assert not any(".git" in path for path in paths)
+
+    report = next(f for f in bundle.files if f.path == "git-history.txt").content
+    assert "Git-репозиторий: proj/.git" in report
+    assert "Текущая ветка: main" in report
+    assert "Второй коммит" in report
+    assert "Первый коммит" in report
+
+    context = build_context(bundle, max_chars=4000)
+    assert "git-history.txt" in context
+
+
+def test_7z_git_history_report():
+    settings = make_settings()
+    entries = {"proj/main.py": b"print(1)"}
+    entries.update({f"proj/{name}": data for name, data in make_git_members().items()})
+
+    bundle = load_archive(make_7z(entries), "proj.7z", settings)
+    report = next(f for f in bundle.files if f.path == "git-history.txt").content
+    assert "Текущая ветка: main" in report
+    assert "Первый коммит" in report
+
+
+def test_zip_without_git_has_no_report():
+    settings = make_settings()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("proj/main.py", "print(1)")
+    bundle = load_archive(buf.getvalue(), "proj.zip", settings)
+    assert "git-history.txt" not in {f.path for f in bundle.files}
 
 
 def test_load_single_python_file():
