@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -6,6 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # Ollama остаётся провайдером по умолчанию. Значение `openai` включает
+    # любой OpenAI-совместимый API (OpenAI, DeepSeek, Groq, OpenRouter, vLLM...).
+    llm_provider: Literal["ollama", "openai"] = "ollama"
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5-coder:7b"
     llm_temperature: float = 0.0
@@ -13,6 +17,12 @@ class Settings(BaseSettings):
     llm_seed: int = 42
     llm_request_timeout: float = 300.0
     llm_num_ctx: int = 16_384
+
+    # Настройки OpenAI-совместимого провайдера (используются при llm_provider=openai).
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    # Пустое значение = json_schema для Ollama и function_calling для OpenAI.
+    llm_structured_method: Literal["", "json_schema", "json_mode", "function_calling"] = ""
 
     default_max_score: int = 100
     grade_max_retries: int = 2

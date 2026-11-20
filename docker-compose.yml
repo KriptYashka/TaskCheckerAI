@@ -12,6 +12,13 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       LLM_MODEL: qwen2.5-coder:7b
       LLM_NUM_CTX: "16384"
+      # Чтобы использовать OpenAI-совместимый API, раскомментируйте строки ниже
+      # и задайте LLM_PROVIDER=openai. Ключ лучше передавать через .env, а не хранить здесь.
+      # LLM_PROVIDER: openai
+      # LLM_API_KEY: ${LLM_API_KEY:-}
+      # LLM_BASE_URL: https://api.openai.com/v1
+      # LLM_MODEL: gpt-4o-mini
+      # LLM_NUM_CTX: "128000"
       API_HOST: 0.0.0.0
       API_PORT: "8000"
       # Внутри контейнера Docker-песочница недоступна. Локальный запуск включается

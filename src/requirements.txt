@@ -2,6 +2,7 @@ langchain>=1.4.6
 langchain-core>=1.2.21
 langgraph>=1.2.15
 langchain-ollama>=1.1.0
+langchain-openai>=1.1.0
 fastapi>=0.143.3
 uvicorn[standard]>=0.54.0
 python-multipart>=0.0.32

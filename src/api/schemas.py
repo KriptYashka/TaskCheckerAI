@@ -158,12 +158,23 @@ class HealthResponse(BaseModel):
         description="Имя LLM-модели, используемой для проверки.",
         examples=["qwen2.5-coder:7b"],
     )
+    llm_provider: str = Field(
+        description="Активный провайдер LLM: `ollama` или `openai`.",
+        examples=["ollama"],
+    )
+    llm_available: bool = Field(
+        description="Доступен ли выбранный LLM-эндпоинт.",
+        examples=[True],
+    )
     sandbox_backend: str = Field(
         description="Активный бэкенд песочницы: `docker`, `local` или `off`.",
         examples=["local"],
     )
     ollama_available: bool = Field(
-        description="Доступен ли сервер Ollama по адресу `OLLAMA_BASE_URL`.",
+        description=(
+            "Доступен ли сервер Ollama по адресу `OLLAMA_BASE_URL`. "
+            "При `llm_provider=openai` всегда `false`."
+        ),
         examples=[True],
     )
 
@@ -173,6 +184,8 @@ class HealthResponse(BaseModel):
                 {
                     "status": "ok",
                     "model": "qwen2.5-coder:7b",
+                    "llm_provider": "ollama",
+                    "llm_available": True,
                     "sandbox_backend": "local",
                     "ollama_available": True,
                 }
